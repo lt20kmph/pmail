@@ -1,0 +1,10 @@
+*.key
+*.db
+*.pickle
+credentials.*
+*.json
+*.log
+test*
+tmp/
+quickstart.py
+__pycache__
