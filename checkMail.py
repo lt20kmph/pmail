@@ -1,21 +1,35 @@
 #!/usr/bin/python
 
 # ---> Imports
-from common import (mkService, s, Labels, MessageInfo,
-                    ListMessagesMatchingQuery, DB_NAME,
-                    HEADERS, removeMessages, addLabels,
-                    removeLabels, WORKING_DIR, logger,
-                    updateUserInfo, addMessages)
 import pickle
 import os.path
 import os
 import sys
+import argparse
+
+from common import (mkService, s, Labels, MessageInfo,
+                    ListMessagesMatchingQuery, DB_NAME,
+                    HEADERS, removeMessages, addLabels,
+                    removeLabels, WORKING_DIR, logger,
+                    updateUserInfo, addMessages, UserInfo)
 from googleapiclient.http import BatchHttpRequest
 from time import sleep
 
 # <---
 
 # ---> Helper functions
+
+
+def numOfUnreadMessages():
+  q1 = s.query(Labels.messageId).filter(Labels.label == 'UNREAD')
+  q2 = s.query(Labels.messageId).filter(Labels.label == 'INBOX')
+  q = s.query(MessageInfo).filter(
+      MessageInfo.messageId.in_(q1),
+      MessageInfo.messageId.in_(q2))
+  count = q.count()
+  logger.info('{} unread emails.'.format(count))
+  return count
+
 
 def storeLastHistoryId(lastMessageId=None, lastHistoryId=None):
   if lastMessageId:
@@ -100,60 +114,29 @@ def updateDb(service, lastHistoryId=None):
 
 # <---
 
+
 if __name__ == '__main__':
-  '''
-  # do the UNIX double-fork magic, see Stevens' "Advanced
-  # Programming in the UNIX Environment" for details (ISBN 0201563177)
-  try:
-     pid = os.fork()
-     if pid > 0:
-         # exit first parent
-         sys.exit(0)
-  except OSError as e: 
-      print (sys.stderr + 'fork #1 failed: %d (%s)' % (e.errno, e.strerror)) 
-      sys.exit(1)
 
-  # decouple from parent environment
-  os.chdir(WORKING_DIR) 
-  os.setsid() 
-  os.umask(0) 
+  parser = argparse.ArgumentParser()
+  parser.add_argument('-n', action='store_true')
+  args = parser.parse_args()
 
-  # do second fork
-  try: 
-      pid = os.fork() 
-      if pid > 0:
-          # exit from second parent, print eventual PID before
-          print ('Daemon PID %d' % pid) 
-          sys.exit(0) 
-  except OSError as e: 
-      print (sys.stderr + 'fork #2 failed: %d (%s)' % (e.errno, e.strerror)) 
-      sys.exit(1)
-
-  logger.info('Initialising daemon...')
-
-  # checkerDaemon = DaemonContext() 
-  # checkerDaemon.working_directory = WORKING_DIR
-  # checkerDaemon.umask = 0o022
-  # checkerDaemon.pidfile = WORKING_DIR + '.pid'
-  # checkerDaemon.files_preserve = [DB_NAME,'.log']
-  # checkerDaemon.detach_process = False
-
-  # logger.info('Working in: ' + WORKING_DIR + ', Database: ' + DB_NAME)
-
-  # with checkerDaemon:
-  '''
-  while 1:
-    updateUserInfo(s, mkService())
+  if args.n == False:
     while 1:
-      logger.info('Preparing to check for mail...')
-      if os.path.exists(DB_NAME):
-        logger.info('Performing partial update...')
-        updateDb(mkService(), getLastHistoryId())
-      else:
-        logger.info('Performing full update...')
-        updateDb(mkService())
-      sleep(300)
-    sleep(3600)
+      updateUserInfo(s, mkService())
+      while 1:
+        logger.info('Preparing to check for mail...')
+        if os.path.exists(DB_NAME):
+          logger.info('Performing partial update...')
+          updateDb(mkService(), getLastHistoryId())
+        else:
+          logger.info('Performing full update...')
+          updateDb(mkService())
+        sleep(300)
+      sleep(3600)
+  else:
+    print(numOfUnreadMessages())
+
 
 """
 vim:foldmethod=marker foldmarker=--->,<---

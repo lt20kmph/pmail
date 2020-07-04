@@ -9,8 +9,10 @@ import os.path
 import re
 import pickle
 import logging
+import yaml
+from yaml import Loader
 from sqlalchemy import create_engine, desc
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
 from sqlalchemy.orm import sessionmaker, relationship, scoped_session
 from sqlalchemy.ext.declarative import declarative_base
 from googleapiclient.discovery import build
@@ -22,7 +24,8 @@ from google.auth.transport.requests import Request
 # If modifying these scopes, delete the file token.pickle.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.send',
-          'https://www.googleapis.com/auth/gmail.modify']
+          'https://www.googleapis.com/auth/gmail.modify',
+          'https://www.googleapis.com/auth/gmail.settings.basic']
 WORKING_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = 'afsec.db'
 DB_PATH = 'sqlite:///' + WORKING_DIR + '/' + DB_NAME
@@ -101,19 +104,27 @@ class Attachments(Base):
   __tablename__ = 'attachments'
   id = Column(Integer, primary_key=True)
   messageId = Column(String, ForeignKey('header_info.messageId'))
+  partId = Column(String)
   filename = Column(String)
   contentType = Column(String)
   size = Column(Integer)
 
-  def __init__(self,messageId,filename,contentType,size):
+  def __init__(self, messageId, partId, filename, contentType, size):
     self.messageId = messageId
+    self.partId = partId
     self.filename = filename
     self.contentType = contentType
     self.size = size
 
   def display(self):
-    display = '{} ({}) {}'.format(
-      self.contentType,
+    contentType = self.contentType 
+    if len(contentType) > 20:
+      contentType = contentType[:20]
+    elif len(contentType) < 20:
+      contentType = contentType + ' ' * (20 - len(contentType))
+    display = '{} {} ({}) {}'.format(
+      self.partId,
+      contentType,
       formatSize(self.size),
       self.filename)
     return display
@@ -190,6 +201,7 @@ class MessageInfo(Base):
   references = Column(String)
   recipients = Column(String)
   contentType = Column(String)
+  hasAttachments = Column(Boolean)
   labels = relationship('Labels', backref='header_info',
                         cascade="all, delete, delete-orphan")
   attachments = relationship('Attachments', backref='header_info',
@@ -258,11 +270,21 @@ class MessageInfo(Base):
     return name
 
   def existsAttachments(self):
-    s = re.search('multipart/mixed',self.contentType) 
-    if s == None:
-      return False
+    '''
+    Try to figure out if there are attachments from the content-type
+    header. This can return false positives. 
+    To deal with this if at some later stage (usually, when trying to view 
+    attachments) it is found that really there were no attachments, the 
+    hasAttachments attribute gets updated to False.
+    '''
+    if self.hasAttachments == False:
+      return self.hasAttachments
     else:
-      return True
+      s = re.search('multipart/mixed',self.contentType) 
+      if s == None:
+        return False
+      else:
+        return True
 
 
 # Only needed to create table structure
@@ -434,7 +456,10 @@ def removeLabels(session, labels):
     session.query(Labels).filter(Labels.messageId == messageId, Labels.label.in_(ls))\
         .delete(synchronize_session=False)
 
-
+def getName(myemail):
+  with open('config.yaml','r') as f:
+      y = yaml.load(f,Loader=Loader)
+  return y[myemail]['name']
 # <---
 """
 vim:foldmethod=marker foldmarker=--->,<---

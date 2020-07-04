@@ -4,7 +4,9 @@
 credentials.*
 *.json
 *.log
+*.yaml
 test*
 tmp/
 quickstart.py
+downloads/
 __pycache__
