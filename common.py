@@ -21,6 +21,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 # <---
 
+# ---> Initial definitions
+
 # If modifying these scopes, delete the file token.pickle.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.send',
@@ -47,12 +49,17 @@ session_factory = sessionmaker(bind=engine)
 Session = scoped_session(session_factory)
 s = Session()
 
+# <---
+
 # ---> mkService
 
 
 def mkService(account):
-  with open('config.yaml','r') as f:
-      y = yaml.load(f,Loader=Loader)
+  '''
+  Make a service object for use with the API.
+  '''
+  with open('config.yaml', 'r') as f:
+    y = yaml.load(f, Loader=Loader)
   credentialsPath = y[account]['credentials']
   tokenPath = os.path.join('tmp/tokens/', account.split('@')[0] + '.pickle')
   creds = None
@@ -68,7 +75,7 @@ def mkService(account):
       creds.refresh(Request())
     else:
       flow = InstalledAppFlow.from_client_secrets_file(
-              credentialsPath, SCOPES)
+          credentialsPath, SCOPES)
       creds = flow.run_local_server(port=0)
     # Save the credentials for the next run
     with open(tokenPath, 'wb') as token:
@@ -79,91 +86,14 @@ def mkService(account):
 
 # <---
 
-# ---> Class defintions
-
-
-class MemoryCache(Cache):
-  _CACHE = {}
-
-  def get(self, url):
-    return MemoryCache._CACHE.get(url)
-
-  def set(self, url, content):
-    MemoryCache._CACHE[url] = content
-
-
-class Attachments(Base):
-  __tablename__ = 'attachments'
-  id = Column(Integer, primary_key=True)
-  messageId = Column(String, ForeignKey('header_info.messageId'))
-  partId = Column(String)
-  filename = Column(String)
-  contentType = Column(String)
-  size = Column(Integer)
-
-  def __init__(self, messageId, partId, filename, contentType, size):
-    self.messageId = messageId
-    self.partId = partId
-    self.filename = filename
-    self.contentType = contentType
-    self.size = size
-
-  def display(self):
-    contentType = self.contentType 
-    if len(contentType) > 20:
-      contentType = contentType[:20]
-    elif len(contentType) < 20:
-      contentType = contentType + ' ' * (20 - len(contentType))
-    display = '{} {} ({}) {}'.format(
-      self.partId,
-      contentType,
-      formatSize(self.size),
-      self.filename)
-    return display
-
-
-class AddressBook(Base):
-  __tablename__ = 'address_book'
-  id = Column(Integer, primary_key=True)
-  account = Column(String, ForeignKey('user_info.emailAddress'))
-  address = Column(String)
-  UniqueConstraint('account', 'address')
-  
-  def __init__(self, account, address):
-    self.account = account
-    self.address = address
-
-
-class UserInfo(Base):
-  __tablename__ = 'user_info'
-  emailAddress = Column(String, primary_key=True)
-  totalMessages = Column(Integer)
-  totalThreads = Column(Integer)
-  historyId = Column(Integer)
-  messages = relationship('MessageInfo', backref='user_info',
-                          cascade='all, delete, delete-orphan')
-  AddressBook = relationship('AddressBook', backref='user_info',
-                          cascade='all, delete, delete-orphan')
-
-  def __init__(self, emailAddress, totalMessages, totalThreads, historyId):
-    self.emailAddress = emailAddress
-    self.totalMessages = totalMessages
-    self.totalThreads = totalThreads
-    self.historyId = historyId
-
-
-class Labels(Base):
-  __tablename__ = 'labels'
-  id = Column(Integer, primary_key=True)
-  messageId = Column(String, ForeignKey('header_info.messageId'))
-  label = Column(String)
-
-  def __init__(self, messageId, label):
-    self.messageId = messageId
-    self.label = label
+# ---> Formating functions
 
 
 def formatSize(num):
+  '''
+  Format a filesize in bytes into a human readable 
+  one.
+  '''
   for unit in ['B', 'K', 'M', 'G', 'T', 'P', 'E', 'Z']:
     if abs(num) < 1024.0:
       # return "%3.1f%s%s" % (num, unit, suffix)
@@ -180,19 +110,196 @@ def formatSize(num):
 
 
 def unix2localTime(unix_timestamp):
+  '''
+  Convert timestamp to local time and format 
+  like e.g. Jun 3
+  '''
   utc_time = datetime.fromtimestamp(int(unix_timestamp)//1000, timezone.utc)
   local_time = utc_time.astimezone()
   return local_time.strftime("%b %d")
 
 
 def unix2localTime2(unix_timestamp):
+  '''
+  Convert timestamp to local time and format like
+  e.g. Mon, Jun 30, 2020 at 5.25 PM
+  '''
   utc_time = datetime.fromtimestamp(int(unix_timestamp)//1000, timezone.utc)
   local_time = utc_time.astimezone()
   return local_time.strftime("%a, %b %d, %Y at %-I.%-M %p")
 
+# <---
+
+# ---> Class defintions
+
+
+class MemoryCache(Cache):
+  '''
+  This is needed so that the cache is working inside Thread 
+  objects.
+  '''
+  _CACHE = {}
+
+  def get(self, url):
+    return MemoryCache._CACHE.get(url)
+
+  def set(self, url, content):
+    MemoryCache._CACHE[url] = content
+
+
+class Attachments(Base):
+  '''
+  Store Attachments.
+  '''
+  __tablename__ = 'attachments'
+  id = Column(Integer, primary_key=True)
+  messageId = Column(String, ForeignKey('header_info.messageId'))
+  partId = Column(String)
+  filename = Column(String)
+  contentType = Column(String)
+  size = Column(Integer)
+
+  def __init__(self, messageId, partId, filename, contentType, size):
+    self.messageId = messageId
+    self.partId = partId
+    self.filename = filename
+    self.contentType = contentType
+    self.size = size
+
+  def display(self):
+    '''
+    Display information about the attachment.
+    '''
+    contentType = self.contentType
+    if len(contentType) > 20:
+      contentType = contentType[:20]
+    elif len(contentType) < 20:
+      contentType = contentType + ' ' * (20 - len(contentType))
+    display = '{} {} ({}) {}'.format(
+        self.partId,
+        contentType,
+        formatSize(self.size),
+        self.filename)
+    return display
+
+
+class AddressBook(Base):
+  '''
+  Store address in a seperate table so that it can be queried
+  quickly rather than an expensive query on the MessageInfo
+  table every time it is needed.
+  '''
+  __tablename__ = 'address_book'
+  account = Column(String, ForeignKey('user_info.emailAddress'),
+                   primary_key=True)
+  address = Column(String, primary_key=True)
+
+  def __init__(self, account, address):
+    self.account = account
+    self.address = address
+
+  @classmethod
+  def mk(cls, account):
+    '''
+    Method to scour for email address in the MessageInfo table
+    and sort them into uniques and add to the AddressBook table
+    '''
+    # Could make this more effecient!
+    query = s.query(MessageInfo).filter(MessageInfo.emailAddress == account)
+    seen = set()
+    for q in query:
+      if q.sender in seen:
+        continue
+      else:
+        seen.add(re.sub('^ ', '', q.sender))
+      try:
+        all = filter(lambda x: not re.search(account, x),
+                     (q.recipients).split(','))
+      except:
+        pass
+      for a in all:
+        if a in seen:
+          continue
+        else:
+          seen.add(re.sub('^ ', '', a))
+    # s.query(AddressBook).filter(AddressBook.account == account).delete()
+    # s.commit()
+
+    addresses = []
+    for a in seen:
+      if not s.query(cls).filter(
+              cls.account == account,
+              cls.address == a.lower()).first():
+        addresses.append(cls(account, a.lower()))
+    s.add_all(addresses)
+    s.commit()
+
+
+class UserInfo(Base):
+  '''
+  Store Profile information for each account.
+  '''
+  __tablename__ = 'user_info'
+  emailAddress = Column(String, primary_key=True)
+  totalMessages = Column(Integer)
+  totalThreads = Column(Integer)
+  historyId = Column(Integer)
+  messages = relationship('MessageInfo', backref='user_info',
+                          cascade='all, delete, delete-orphan')
+  addressBook = relationship('AddressBook', backref='user_info',
+                             cascade='all, delete, delete-orphan')
+
+  def __init__(self, emailAddress, totalMessages, totalThreads, historyId):
+    self.emailAddress = emailAddress
+    self.totalMessages = totalMessages
+    self.totalThreads = totalThreads
+    self.historyId = historyId
+
+  @classmethod
+  def update(cls, session, service):
+    '''
+    Method to update UserInfo.
+
+    Args:
+      session: A DB session
+      service: API service.
+    '''
+    profile = service.users().getProfile(userId='me').execute()
+    emailAddress = profile['emailAddress']
+    messagesTotal = profile['messagesTotal']
+    threadsTotal = profile['threadsTotal']
+    historyId = profile['historyId']
+    userInfo = cls(emailAddress, messagesTotal, threadsTotal, historyId)
+    q = session.query(cls)
+    if q.first():
+      session.query(cls).update(
+          {cls.totalMessages: messagesTotal,
+           cls.totalThreads: threadsTotal,
+           cls.historyId: historyId}, synchronize_session=False)
+    else:
+      session.add(userInfo)
+
+
+class Labels(Base):
+  '''
+  Store Labels attached to messages.
+  '''
+  __tablename__ = 'labels'
+  id = Column(Integer, primary_key=True)
+  messageId = Column(String, ForeignKey('header_info.messageId'))
+  label = Column(String)
+
+  def __init__(self, messageId, label):
+    self.messageId = messageId
+    self.label = label
+
+# ---> MessageInfo class
+
 
 class MessageInfo(Base):
-
+  '''
+  Big class for storing information about an email
+  '''
   __tablename__ = 'header_info'
   messageId = Column(String, primary_key=True)
   emailAddress = Column(String, ForeignKey('user_info.emailAddress'))
@@ -212,11 +319,11 @@ class MessageInfo(Base):
   labels = relationship('Labels', backref='header_info',
                         cascade="all, delete, delete-orphan")
   attachments = relationship('Attachments', backref='header_info',
-                        cascade="all, delete, delete-orphan")
+                             cascade="all, delete, delete-orphan")
 
-  def __init__(self, messageId, emailAddress, historyId, time, size, 
-      snippet, externalId, subject, sender, replyTo, inReplyTo, 
-      references, recipients, contentType):
+  def __init__(self, messageId, emailAddress, historyId, time, size,
+               snippet, externalId, subject, sender, replyTo, inReplyTo,
+               references, recipients, contentType):
     self.messageId = messageId
     self.emailAddress = emailAddress
     self.historyId = historyId
@@ -230,9 +337,19 @@ class MessageInfo(Base):
     self.inReplyTo = inReplyTo
     self.references = references
     self.recipients = recipients
-    self.contentType = contentType 
+    self.contentType = contentType
 
   def display(self, senderWidth, scrWidth):
+    '''
+    For displaying information about a message in the main screen
+    of the program.
+    Args:
+      senderWidth: How wide should the sender column be.
+      scrWidth: How wide is the screen.
+
+    Reurns:
+      A formatted string.
+    '''
     if 'UNREAD' in [l.label for l in self.labels]:
       marker = '\uf0e0 '
       # marker = "*"
@@ -251,16 +368,24 @@ class MessageInfo(Base):
         attachment,
         self.subject,
         ' ' * scrWidth
-        )[:scrWidth]
+    )[:scrWidth]
     return str
 
   def showLabels(self):
     return [l.label for l in self.labels]
 
   def timeForReply(self):
+    '''
+    Returns the formatted time for use in the extra line of
+    information inserted at the top of replies.
+    '''
     return unix2localTime2(self.time)
 
   def parseSender(self):
+    '''
+    Try to extract name and email address from the 'From' 
+    field of the header.
+    '''
     try:
       email = re.search('\<(.*?)\>', self.sender).group(1)
     except:
@@ -289,23 +414,28 @@ class MessageInfo(Base):
       return self.hasAttachments
     else:
       try:
-        s = re.search('multipart/mixed',self.contentType) 
+        s = re.search('multipart/mixed', self.contentType)
       except:
         s = False
       if s == None:
         return False
       else:
         return True
-
-
-# Only needed to create table structure
-Base.metadata.create_all()
 # <---
 
-# ---> Other functions
+# <---
+
+# ---> Adding, removing and modifying messages
 
 
 def addMessage(account, session, msg):
+  '''
+  Add a message to the db.
+  Args:
+    account: Account which owns the message.
+    session: A db session.
+    msg: The message to add.
+  '''
   headers = dict(zip(HEADERS, [None for i in range(len(HEADERS))]))
   for h in msg['payload']['headers']:
     name = h['name']
@@ -327,7 +457,7 @@ def addMessage(account, session, msg):
   except KeyError:
     logger.debug('Could not add: ' + str(msg))
     logger.debug("Adding label ['UNCLASSIFIED']")
-    session.add(Labels(msg['id'],'UNCLASSIFIED'))
+    session.add(Labels(msg['id'], 'UNCLASSIFIED'))
   if headers['From']:
     header = MessageInfo(
         msg['id'],
@@ -352,10 +482,19 @@ def addMessage(account, session, msg):
 
 
 def addMessages(session, account, service, messageIds):
+  '''
+  Add many messages to the db.
+
+  Args: 
+    session: A db session.
+    account: The accoun which owns the messages
+    service: An API service.
+    messageIds: List of message ids which we are going to add.
+  '''
   def doesMessageAlreadyExist(messageId):
     q = session.query(MessageInfo).filter(MessageInfo.messageId == messageId)
     if q.first():
-      return False 
+      return False
     else:
       return True
   q = list(filter(doesMessageAlreadyExist, messageIds))
@@ -374,14 +513,50 @@ def addMessages(session, account, service, messageIds):
     i += 100
 
 
-def _updateDb(session, account, requestId, response, exception):
-  if exception is not None:
-    logger.debug(exception)
-    # Do something with the exception
-    # See BatchHttpRequest docs
-  else:
-    # Parse headers.
-    addMessage(account, session, response)
+def removeMessages(messageIds):
+  '''
+  Delete messages (Not in use currently and 
+  might need extra scopes to work.)
+  '''
+  s.query(MessageInfo).filter(MessageInfo.messageId in
+                              messageIds).delete(synchronize_session='fetch')
+
+
+def addLabels(session, labels):
+  '''
+  Add labels to messages.
+
+  Args:
+    session: A DB session.
+    labels: A list of pairs (m,ls) where m is a message
+    id and ls is a list of labels to add to the message.
+
+  Returns: None.
+  '''
+  for (messageId, ls) in labels:
+    for l in ls:
+      label = Labels(messageId, l)
+      session.add(label)
+
+
+def removeLabels(session, labels):
+  '''
+  Remove labels to messages.
+
+  Args:
+    session: A DB session.
+    labels: A list of pairs (m,ls) where m is a message
+    id and ls is a list of labels to add to the message.
+
+  Returns: None.
+  '''
+  for (messageId, ls) in labels:
+    session.query(Labels).filter(Labels.messageId == messageId, Labels.label.in_(ls))\
+        .delete(synchronize_session=False)
+
+# <---
+
+# ---> Getting message Id's from Google
 
 
 def ListMessagesMatchingQuery(service, user_id, query=''):
@@ -416,14 +591,42 @@ def ListMessagesMatchingQuery(service, user_id, query=''):
   except:
     print('An error occurred')
 
+# <---
+
+# ---> Db update functions
+
+def _updateDb(session, account, requestId, response, exception):
+  '''
+  Helper function for batch requests.
+  
+  Args:
+    session: A DB session.
+    account: The account which the messages belong to.
+    requestId: Id of the request.
+    response: Response of the request (If succesful, this is the message)
+    exception: An exception if something went wrong.
+  '''
+  if exception is not None:
+    logger.debug(exception)
+    # Do something with the exception
+    # See BatchHttpRequest docs
+  else:
+    # Parse headers.
+    addMessage(account, session, response)
+
+
+# <---
+
+# ---> Find information
+
 def countAttachments(message):
   c = 0
   if 'payload' in message:
     if 'parts' in message['payload']:
       for part in message['payload']['parts']:
         if part['filename']:
-          c+=1
-      return c 
+          c += 1
+      return c
     else:
       return 0
   else:
@@ -434,87 +637,29 @@ def myEmail(service):
   return (service.users().getProfile(userId='me').execute())['emailAddress']
 
 
-def updateUserInfo(session, service):
-  profile = service.users().getProfile(userId='me').execute()
-  emailAddress = profile['emailAddress']
-  messagesTotal = profile['messagesTotal']
-  threadsTotal = profile['threadsTotal']
-  historyId = profile['historyId']
-  userInfo = UserInfo(emailAddress, messagesTotal, threadsTotal, historyId)
-  q = session.query(UserInfo)
-  if q.first():
-    session.query(UserInfo).update(
-        {UserInfo.totalMessages: messagesTotal,
-         UserInfo.totalThreads: threadsTotal,
-         UserInfo.historyId: historyId}, synchronize_session=False)
-  else:
-    session.add(userInfo)
-
-
-def removeMessages(messageIds):
-  s.query(MessageInfo).filter(MessageInfo.messageId in
-                             messageIds).delete(synchronize_session='fetch')
-
-
-def addLabels(session, labels):
-  for (messageId, ls) in labels:
-    for l in ls:
-      label = Labels(messageId, l)
-      session.add(label)
-
-
-def removeLabels(session, labels):
-  for (messageId, ls) in labels:
-    session.query(Labels).filter(Labels.messageId == messageId, Labels.label.in_(ls))\
-        .delete(synchronize_session=False)
-
 def listAccounts():
-  with open('config.yaml','r') as f:
-      y = yaml.load(f,Loader=Loader)
-  return y.keys() 
+  with open('config.yaml', 'r') as f:
+    y = yaml.load(f, Loader=Loader)
+  return y.keys()
 
 
 def getName(myemail):
-  with open('config.yaml','r') as f:
-      y = yaml.load(f,Loader=Loader)
+  with open('config.yaml', 'r') as f:
+    y = yaml.load(f, Loader=Loader)
   return y[myemail]['name']
+
 
 def addressList(myemail):
   q = s.query(AddressBook).filter(AddressBook.account == myemail)
   for address in q:
     yield address.address
 
-
-def mkAddressBook(account):
-  # Could make this more effecient!
-  query = s.query(MessageInfo).filter(MessageInfo.emailAddress == account)
-  seen = set()
-  for q in query:
-    if q.sender in seen:
-      continue
-    else:
-      seen.add(q.sender)
-    try:
-      all = filter(lambda x: not re.search(account,x), 
-              (q.recipients).split(','))  
-    except: 
-      pass
-    for a in all:
-      if a in seen:
-        continue
-      else:
-        seen.add(a)
-  s.query(AddressBook).delete()
-  s.commit()
-  
-  addresses = []
-  for a in seen:
-    if not s.query(AddressBook).filter(AddressBook.address == a).first():
-      addresses.append(AddressBook(account,a))
-  s.add_all(addresses)
-  s.commit()
-
 # <---
+
+
+# Only needed to create table structure
+Base.metadata.create_all()
+
 """
 vim:foldmethod=marker foldmarker=--->,<---
 """
