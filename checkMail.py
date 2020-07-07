@@ -11,19 +11,21 @@ from common import (mkService, s, Labels, MessageInfo,
                     ListMessagesMatchingQuery, DB_NAME,
                     HEADERS, removeMessages, addLabels,
                     removeLabels, WORKING_DIR, logger,
-                    updateUserInfo, addMessages, UserInfo)
+                    updateUserInfo, addMessages, UserInfo,
+                    listAccounts, mkAddressBook)
 from googleapiclient.http import BatchHttpRequest
 from time import sleep
 
 # <---
 
 # ---> Helper functions
+PICKLE_DIR = 'tmp/pickles'
 
-
-def numOfUnreadMessages():
+def numOfUnreadMessages(account):
   q1 = s.query(Labels.messageId).filter(Labels.label == 'UNREAD')
   q2 = s.query(Labels.messageId).filter(Labels.label == 'INBOX')
   q = s.query(MessageInfo).filter(
+      MessageInfo.emailAddress == account,
       MessageInfo.messageId.in_(q1),
       MessageInfo.messageId.in_(q2))
   count = q.count()
@@ -31,26 +33,28 @@ def numOfUnreadMessages():
   return count
 
 
-def storeLastHistoryId(lastMessageId=None, lastHistoryId=None):
+def storeLastHistoryId(account, lastMessageId=None, lastHistoryId=None):
+  path = os.path.join(PICKLE_DIR,'lastHistoryId.' + account + '.pickle')
   if lastMessageId:
     q = s.query(MessageInfo).get(lastMessageId)
-    with open('lastHistoryId.pickle', 'wb') as f:
+    with open(path, 'wb') as f:
       pickle.dump(q.historyId, f)
   elif lastHistoryId:
-    with open('lastHistoryId.pickle', 'wb') as f:
+    with open(path, 'wb') as f:
       pickle.dump(lastHistoryId, f)
 
 
-def getLastHistoryId():
-  if os.path.exists('lastHistoryId.pickle'):
-    with open('lastHistoryId.pickle', 'rb') as f:
+def getLastHistoryId(account):
+  path = os.path.join(PICKLE_DIR,'lastHistoryId.' + account + '.pickle')
+  if os.path.exists(path):
+    with open(path,'rb') as f:
       return pickle.load(f)
 
 
 def ListHistory(service, user_id, start_history_id='1'):
   """List History of all changes to the user's mailbox.
 
-  Args:
+ Args:
     service: Authorized Gmail API service instance.
     user_id: User's email address. The special value "me"
     can be used to indicate the authenticated user.
@@ -76,15 +80,15 @@ def ListHistory(service, user_id, start_history_id='1'):
     print('error?')
 
 
-def updateDb(service, lastHistoryId=None):
+def updateDb(account, service, lastHistoryId=None):
   # 100 is maximum size of batch!
   if lastHistoryId is None:
-    messageIds = ListMessagesMatchingQuery(mkService(),
-                                           'me', query='newer_than:1y')
-    addMessages(s, service, [m['id'] for m in messageIds])
+    messageIds = ListMessagesMatchingQuery(service(account),
+                                           'me', query='newer_than:6m')
+    addMessages(s, account, service(account), [m['id'] for m in messageIds])
     lastMessageId = messageIds[0]['id']
   else:
-    changes = ListHistory(mkService(), 'me', getLastHistoryId())
+    changes = ListHistory(service(account), 'me', getLastHistoryId(account))
     messagesAdded, messagesDeleted = [], []
     labelsAdded, labelsRemoved = [], []
     for change in changes:
@@ -100,7 +104,7 @@ def updateDb(service, lastHistoryId=None):
       if 'labelsRemoved' in change:
         labelsRemoved += [(c['message']['id'], c['labelIds']) for c in
                           change['labelsRemoved']]
-    addMessages(s, service, messagesAdded)
+    addMessages(s, account, service(account), messagesAdded)
     removeMessages(messagesDeleted)
     addLabels(s, labelsAdded)
     removeLabels(s, labelsRemoved)
@@ -110,7 +114,7 @@ def updateDb(service, lastHistoryId=None):
       lastHistoryId = None
     lastMessageId = None
   s.commit()
-  storeLastHistoryId(lastMessageId=lastMessageId, lastHistoryId=lastHistoryId)
+  storeLastHistoryId(account, lastMessageId=lastMessageId, lastHistoryId=lastHistoryId)
 
 # <---
 
@@ -118,24 +122,27 @@ def updateDb(service, lastHistoryId=None):
 if __name__ == '__main__':
 
   parser = argparse.ArgumentParser()
-  parser.add_argument('-n', action='store_true')
+  parser.add_argument('-n', action='store')
   args = parser.parse_args()
 
-  if args.n == False:
+  if args.n == None:
     while 1:
-      updateUserInfo(s, mkService())
+      for account in listAccounts():
+        updateUserInfo(s, mkService(account))
       while 1:
-        logger.info('Preparing to check for mail...')
-        if os.path.exists(DB_NAME):
-          logger.info('Performing partial update...')
-          updateDb(mkService(), getLastHistoryId())
-        else:
-          logger.info('Performing full update...')
-          updateDb(mkService())
+        for account in listAccounts():
+          logger.info('Preparing to check for mail...')
+          if os.path.exists(DB_NAME):
+            logger.info('Performing partial update...')
+            updateDb(account, mkService, getLastHistoryId(account))
+          else:
+            logger.info('Performing full update...')
+            updateDb(account, mkService)
+          mkAddressBook(account)
         sleep(300)
       sleep(3600)
   else:
-    print(numOfUnreadMessages())
+    print(numOfUnreadMessages(args.n))
 
 
 """

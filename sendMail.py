@@ -4,6 +4,7 @@
 """
 
 # ---> Imports
+import re
 import base64
 import mimetypes
 import os
@@ -31,8 +32,8 @@ def sendMessage(service, userId, message):
     Sent Message.
   """
   try:
-    message = (service.users().messages().send(userId=userId, body=message)
-               .execute())
+    message = (service.users().messages().\
+        send(userId=userId, body=message).execute())
     # print('Message Id: %s' % message['id'])
     return message
   except errors.Error as e:
@@ -112,8 +113,8 @@ def createMessage(sender, messageText, **kwargs):
   Keyword args:
     type: One of NEW, REPLY, FORWARD.
     attachments: If present a list of files to attach.
-    to: Who to send the mail to. Only needed if type is NEW or FORWARD.
-    subject: Only if type is NEW.
+    to: Who to send the mail to. 
+    subject: Subject line of the mail. 
     header: If type is reply or foreward, this must be present.
 
   Returns: Base64-encoded email message.
@@ -129,16 +130,16 @@ def createMessage(sender, messageText, **kwargs):
   else:
     message = MIMEText(messageText, _charset='utf-8')
 
-  if not to:
-    if header.replyTo:
-      to = header.replyTo
-    else:
-      to = header.sender
+  # if not to:
+  #   if header.replyTo:
+  #     to = header.replyTo
+  #   else:
+  #     to = header.sender
 
-  if type == 'REPLY':
-      subject = mkSubject(header)
-  elif type == 'FORWARD':
-      subject = mkSubject(header, isFwd=True)
+  # if type == 'REPLY':
+  #     subject = mkSubject(header)
+  # elif type == 'FORWARD':
+  #     subject = mkSubject(header, isFwd=True)
 
   message['From'] = '{} <{}>'.format(getName(sender), sender)
   message['To'] = to
@@ -185,16 +186,26 @@ def createMessage(sender, messageText, **kwargs):
       message.as_string().encode()).decode()}
 
 
-def mkSubject(header, **kwargs):
-  isFwd = kwargs.get('isFwd', False)
-  if isFwd == False:
+def mkSubject(header, type):
+  if type in ['REPLY','REPLYTOALL']:
     if (header.subject)[:3] not in ['re:', 'Re:']:
       subject = 'Re: ' + header.subject
     else:
       subject = header.subject
-  elif isFwd == True:
+  elif type == 'FORWARD':
     subject = 'Fwd: ' + header.subject
   return subject
+
+def mkTo(sender, header, type):
+  if type == 'REPLY':
+    to = header.sender
+  elif type == 'REPLYTOALL':
+    all = filter(lambda x: not re.search(sender,x), 
+            (header.recipients).split(','))  
+    to = header.sender
+    for a in all:
+        to += (', ' + a)
+  return to
 
 '''
 def createReply(myemail, header, messageText):

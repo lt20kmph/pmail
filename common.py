@@ -11,7 +11,7 @@ import pickle
 import logging
 import yaml
 from yaml import Loader
-from sqlalchemy import create_engine, desc
+from sqlalchemy import create_engine, desc, UniqueConstraint
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
 from sqlalchemy.orm import sessionmaker, relationship, scoped_session
 from sqlalchemy.ext.declarative import declarative_base
@@ -26,10 +26,10 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.send',
           'https://www.googleapis.com/auth/gmail.modify',
           'https://www.googleapis.com/auth/gmail.settings.basic']
+
 WORKING_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = 'afsec.db'
 DB_PATH = 'sqlite:///' + WORKING_DIR + '/' + DB_NAME
-# + '?check_same_thread=False'
 
 HEADERS = ['From', 'Subject', 'To', 'Reply-To', 'In-Reply-To',
            'References', 'Message-ID', 'Content-Type']
@@ -37,38 +37,30 @@ HEADERS = ['From', 'Subject', 'To', 'Reply-To', 'In-Reply-To',
 logging.basicConfig(filename='.log',
                     level=logging.DEBUG,
                     format='%(asctime)s :: %(levelname)s - %(message)s')
+
 logger = logging.getLogger()
-
-# # Create handlers
-# handler = logging.FileHandler('.log')
-# handler.setLevel(logging.DEBUG)
-
-# # Create formatters and add it to handlers
-# format = logging.Formatter()
-# handler.setFormatter(format)
-
-# # Add handlers to the logger
-# logger.addHandler(handler)
 
 engine = create_engine(DB_PATH)
 Base = declarative_base(bind=engine)
 
-# Session = sessionmaker(bind=engine)
 session_factory = sessionmaker(bind=engine)
 Session = scoped_session(session_factory)
-# log.info('DB connection successful')
 s = Session()
 
 # ---> mkService
 
 
-def mkService():
+def mkService(account):
+  with open('config.yaml','r') as f:
+      y = yaml.load(f,Loader=Loader)
+  credentialsPath = y[account]['credentials']
+  tokenPath = os.path.join('tmp/tokens/', account.split('@')[0] + '.pickle')
   creds = None
   # The file token.pickle stores the user's access and refresh tokens, and is
   # created automatically when the authorization flow completes for the first
   # time.
-  if os.path.exists('token.pickle'):
-    with open('token.pickle', 'rb') as token:
+  if os.path.exists(tokenPath):
+    with open(tokenPath, 'rb') as token:
       creds = pickle.load(token)
   # If there are no (valid) credentials available, let the user log in.
   if not creds or not creds.valid:
@@ -76,10 +68,10 @@ def mkService():
       creds.refresh(Request())
     else:
       flow = InstalledAppFlow.from_client_secrets_file(
-          'credentials.json', SCOPES)
+              credentialsPath, SCOPES)
       creds = flow.run_local_server(port=0)
     # Save the credentials for the next run
-    with open('token.pickle', 'wb') as token:
+    with open(tokenPath, 'wb') as token:
       pickle.dump(creds, token)
 
   service = build('gmail', 'v1', credentials=creds, cache=MemoryCache())
@@ -129,6 +121,19 @@ class Attachments(Base):
       self.filename)
     return display
 
+
+class AddressBook(Base):
+  __tablename__ = 'address_book'
+  id = Column(Integer, primary_key=True)
+  account = Column(String, ForeignKey('user_info.emailAddress'))
+  address = Column(String)
+  UniqueConstraint('account', 'address')
+  
+  def __init__(self, account, address):
+    self.account = account
+    self.address = address
+
+
 class UserInfo(Base):
   __tablename__ = 'user_info'
   emailAddress = Column(String, primary_key=True)
@@ -136,7 +141,9 @@ class UserInfo(Base):
   totalThreads = Column(Integer)
   historyId = Column(Integer)
   messages = relationship('MessageInfo', backref='user_info',
-                          cascade="all, delete, delete-orphan")
+                          cascade='all, delete, delete-orphan')
+  AddressBook = relationship('AddressBook', backref='user_info',
+                          cascade='all, delete, delete-orphan')
 
   def __init__(self, emailAddress, totalMessages, totalThreads, historyId):
     self.emailAddress = emailAddress
@@ -207,10 +214,11 @@ class MessageInfo(Base):
   attachments = relationship('Attachments', backref='header_info',
                         cascade="all, delete, delete-orphan")
 
-  def __init__(self, messageId, historyId, time, size, snippet, externalId,
-               subject, sender, replyTo, inReplyTo, references, recipients,
-               contentType):
+  def __init__(self, messageId, emailAddress, historyId, time, size, 
+      snippet, externalId, subject, sender, replyTo, inReplyTo, 
+      references, recipients, contentType):
     self.messageId = messageId
+    self.emailAddress = emailAddress
     self.historyId = historyId
     self.time = time
     self.size = size
@@ -280,7 +288,10 @@ class MessageInfo(Base):
     if self.hasAttachments == False:
       return self.hasAttachments
     else:
-      s = re.search('multipart/mixed',self.contentType) 
+      try:
+        s = re.search('multipart/mixed',self.contentType) 
+      except:
+        s = False
       if s == None:
         return False
       else:
@@ -294,7 +305,7 @@ Base.metadata.create_all()
 # ---> Other functions
 
 
-def addMessage(session, msg):
+def addMessage(account, session, msg):
   headers = dict(zip(HEADERS, [None for i in range(len(HEADERS))]))
   for h in msg['payload']['headers']:
     name = h['name']
@@ -320,6 +331,7 @@ def addMessage(session, msg):
   if headers['From']:
     header = MessageInfo(
         msg['id'],
+        account,
         msg['historyId'],
         msg['internalDate'],
         msg['sizeEstimate'],
@@ -339,7 +351,7 @@ def addMessage(session, msg):
     logger.debug(str(msg))
 
 
-def addMessages(session, service, messageIds):
+def addMessages(session, account, service, messageIds):
   def doesMessageAlreadyExist(messageId):
     q = session.query(MessageInfo).filter(MessageInfo.messageId == messageId)
     if q.first():
@@ -356,20 +368,20 @@ def addMessages(session, service, messageIds):
           id=messageId,
           format='metadata',
           metadataHeaders=HEADERS
-      ), callback=(lambda x, y, z: _updateDb(session, x, y, z)))
+      ), callback=(lambda x, y, z: _updateDb(session, account, x, y, z)))
     batch.execute()
     batch = service.new_batch_http_request()
     i += 100
 
 
-def _updateDb(session, requestId, response, exception):
+def _updateDb(session, account, requestId, response, exception):
   if exception is not None:
     logger.debug(exception)
     # Do something with the exception
     # See BatchHttpRequest docs
   else:
     # Parse headers.
-    addMessage(session, response)
+    addMessage(account, session, response)
 
 
 def ListMessagesMatchingQuery(service, user_id, query=''):
@@ -456,10 +468,52 @@ def removeLabels(session, labels):
     session.query(Labels).filter(Labels.messageId == messageId, Labels.label.in_(ls))\
         .delete(synchronize_session=False)
 
+def listAccounts():
+  with open('config.yaml','r') as f:
+      y = yaml.load(f,Loader=Loader)
+  return y.keys() 
+
+
 def getName(myemail):
   with open('config.yaml','r') as f:
       y = yaml.load(f,Loader=Loader)
   return y[myemail]['name']
+
+def addressList(myemail):
+  q = s.query(AddressBook).filter(AddressBook.account == myemail)
+  for address in q:
+    yield address.address
+
+
+def mkAddressBook(account):
+  # Could make this more effecient!
+  query = s.query(MessageInfo).filter(MessageInfo.emailAddress == account)
+  seen = set()
+  for q in query:
+    if q.sender in seen:
+      continue
+    else:
+      seen.add(q.sender)
+    try:
+      all = filter(lambda x: not re.search(account,x), 
+              (q.recipients).split(','))  
+    except: 
+      pass
+    for a in all:
+      if a in seen:
+        continue
+      else:
+        seen.add(a)
+  s.query(AddressBook).delete()
+  s.commit()
+  
+  addresses = []
+  for a in seen:
+    if not s.query(AddressBook).filter(AddressBook.address == a).first():
+      addresses.append(AddressBook(account,a))
+  s.add_all(addresses)
+  s.commit()
+
 # <---
 """
 vim:foldmethod=marker foldmarker=--->,<---
