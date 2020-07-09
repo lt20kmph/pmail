@@ -23,20 +23,81 @@ from google.auth.transport.requests import Request
 
 # ---> Initial definitions
 
+WORKING_DIR = os.path.dirname(os.path.abspath(__file__))
+
+class Config():
+  def __init__(self,config='config.yaml'):
+    configpath = os.path.join(WORKING_DIR,config)
+    with open(configpath, 'r', encoding='utf-8') as f:
+      y = yaml.load(f, Loader=Loader)
+    b = y['behaviour']
+    self.syncFrom = b['sync_from']
+    self.editor = b['editor']
+    self.pager = b['pager']
+    self.picker = b['picker']
+    self.tmpDir = b['tmp_directory']
+    self.pickleDir = b['pickle_directory']
+    self.dlDir = b['download_directory']
+    self.dbPath = b['db_path']
+    self.logLevel = b['log_level']
+    self.logPath = b['log_path']
+    self.updateFreq = b['update_frequency']
+    
+    am = y['appearance']['markers']
+    ac = y['appearance']['colors']
+    self.unread = am['unread']
+    self.attachment = am['attachment']
+    self.user = am['user']
+    self.seperator = am['seperator']
+    self.fg = ac['fg']
+    self.bg = ac['bg']
+    self.hiFg = ac['highlighted_fg']
+    self.hiBg = ac['highlighted_bg']
+    self.selFg = ac['selected_fg']
+    self.selBg = ac['selected_bg']
+    self.stFg = ac['statusline_fg']
+    self.stBg = ac['statusline_bg']
+
+    self.accounts = y['accounts']
+
+  def listAccounts(self):
+    return self.accounts.keys()
+
+  def getName(self, myemail):
+    return self.accounts[myemail]['name']
+
+  def fzfArgs(self, prompt):
+    return self.picker.split(' ') + ['--prompt', prompt]
+
+  def w3mArgs(self):
+    return self.pager.split(' ')
+
+  def vimArgs(self, draftId):
+    args = re.split('(-c)', self.editor)
+    file = 'f ' + os.path.join(self.tmpDir, draftId)
+    args = list(filter(lambda x: not x == '', map(lambda x: x.strip(), args)))
+    args.append(file)
+    return args
+
+
+# Parse config file
+config = Config()
+
 # If modifying these scopes, delete the file token.pickle.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.send',
           'https://www.googleapis.com/auth/gmail.modify',
           'https://www.googleapis.com/auth/gmail.settings.basic']
 
-WORKING_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_NAME = 'afsec.db'
-DB_PATH = 'sqlite:///' + WORKING_DIR + '/' + DB_NAME
+
+# DB_NAME = 'afsec.db'
+
+DB_PATH = 'sqlite:///' + WORKING_DIR + '/' + config.dbPath
 
 HEADERS = ['From', 'Subject', 'To', 'Reply-To', 'In-Reply-To',
            'References', 'Message-ID', 'Content-Type']
 
-logging.basicConfig(filename='.log',
+logging.basicConfig(filename=os.path.join(WORKING_DIR, config.logPath),
                     level=logging.DEBUG,
                     format='%(asctime)s :: %(levelname)s - %(message)s')
 
@@ -58,12 +119,10 @@ def mkService(account):
   '''
   Make a service object for use with the API.
   '''
-  with open('config.yaml', 'r') as f:
-    y = yaml.load(f, Loader=Loader)
-  credentialsPath = y[account]['credentials']
-  tokenPath = os.path.join('tmp/tokens/', account.split('@')[0] + '.pickle')
+  credentialsPath = config.accounts[account]['credentials']
+  tokenPath = os.path.join(config.pickleDir, account.split('@')[0] + '.pickle')
   creds = None
-  # The file token.pickle stores the user's access and refresh tokens, and is
+  # The file *.pickle stores the user's access and refresh tokens, and is
   # created automatically when the authorization flow completes for the first
   # time.
   if os.path.exists(tokenPath):
@@ -126,7 +185,7 @@ def unix2localTime2(unix_timestamp):
   '''
   utc_time = datetime.fromtimestamp(int(unix_timestamp)//1000, timezone.utc)
   local_time = utc_time.astimezone()
-  return local_time.strftime("%a, %b %d, %Y at %-I.%-M %p")
+  return local_time.strftime("%a, %b %d, %Y at %-I.%M %p")
 
 # <---
 
@@ -222,17 +281,15 @@ class AddressBook(Base):
           continue
         else:
           seen.add(re.sub('^ ', '', a))
-    # s.query(AddressBook).filter(AddressBook.account == account).delete()
-    # s.commit()
-
-    addresses = []
-    for a in seen:
-      if not s.query(cls).filter(
-              cls.account == account,
-              cls.address == a.lower()).first():
-        addresses.append(cls(account, a.lower()))
-    s.add_all(addresses)
+    s.query(AddressBook).filter(AddressBook.account == account).delete()
     s.commit()
+
+    for a in seen:
+      try:
+        s.add(AddressBook(account,a))
+        s.commit()
+      except:
+        logger.info('Cannot add: {}'.format(a))
 
 
 class UserInfo(Base):
@@ -351,13 +408,11 @@ class MessageInfo(Base):
       A formatted string.
     '''
     if 'UNREAD' in [l.label for l in self.labels]:
-      marker = '\uf0e0 '
-      # marker = "*"
+      marker = chr(config.unread) + ' '
     else:
-      # marker = '\uf2b7'
       marker = '  '
     if self.existsAttachments():
-      attachment = '\uf02b '
+      attachment =chr(config.attachment) + ' '
     else:
       attachment = '  '
     str = ' {} {} {} ({}) {} {}'.format(
@@ -421,6 +476,7 @@ class MessageInfo(Base):
         return False
       else:
         return True
+
 # <---
 
 # <---
@@ -559,7 +615,7 @@ def removeLabels(session, labels):
 # ---> Getting message Id's from Google
 
 
-def ListMessagesMatchingQuery(service, user_id, query=''):
+def listMessagesMatchingQuery(service, user_id, query=''):
   """List all Messages of the user's mailbox matching the query.
 
   Args:
@@ -637,18 +693,6 @@ def myEmail(service):
   return (service.users().getProfile(userId='me').execute())['emailAddress']
 
 
-def listAccounts():
-  with open('config.yaml', 'r') as f:
-    y = yaml.load(f, Loader=Loader)
-  return y.keys()
-
-
-def getName(myemail):
-  with open('config.yaml', 'r') as f:
-    y = yaml.load(f, Loader=Loader)
-  return y[myemail]['name']
-
-
 def addressList(myemail):
   q = s.query(AddressBook).filter(AddressBook.account == myemail)
   for address in q:
@@ -656,9 +700,9 @@ def addressList(myemail):
 
 # <---
 
-
 # Only needed to create table structure
 Base.metadata.create_all()
+
 
 """
 vim:foldmethod=marker foldmarker=--->,<---

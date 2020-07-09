@@ -7,7 +7,7 @@ import mimetypes
 import os
 
 from apiclient import errors
-from common import logger, getName
+from common import logger, config
 from email.mime.audio import MIMEAudio
 from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
@@ -75,7 +75,7 @@ def createMessage(sender, messageText, **kwargs):
   else:
     message = MIMEText(messageText, _charset='utf-8')
 
-  message['From'] = '{} <{}>'.format(getName(sender), sender)
+  message['From'] = '{} <{}>'.format(config.getName(sender), sender)
   message['To'] = to
   if cc:
     message['Cc'] = cc

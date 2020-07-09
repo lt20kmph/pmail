@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 # ---> Imports
+
 import pickle
 import os.path
 import os
@@ -9,11 +10,11 @@ import argparse
 
 from apiclient import errors
 from common import (mkService, s, Labels, MessageInfo,
-                    ListMessagesMatchingQuery, DB_NAME,
+                    listMessagesMatchingQuery,
                     HEADERS, removeMessages, addLabels,
                     removeLabels, WORKING_DIR, logger,
                     addMessages, UserInfo,
-                    listAccounts, AddressBook)
+                    AddressBook, config)
 from googleapiclient.http import BatchHttpRequest
 from time import sleep
 
@@ -37,7 +38,6 @@ def numOfUnreadMessages(account):
       MessageInfo.messageId.in_(q1),
       MessageInfo.messageId.in_(q2))
   count = q.count()
-  # logger.info('{} unread emails.'.format(count))
   return count
 
 # <---
@@ -46,9 +46,6 @@ def numOfUnreadMessages(account):
 
 
 # ---> Pickling
-
-PICKLE_DIR = 'tmp/pickles'
-
 
 def storeLastHistoryId(account, lastMessageId=None, lastHistoryId=None):
   '''
@@ -62,7 +59,7 @@ def storeLastHistoryId(account, lastMessageId=None, lastHistoryId=None):
   Returns:
     None
   '''
-  path = os.path.join(PICKLE_DIR, 'lastHistoryId.' + account + '.pickle')
+  path = os.path.join(config.pickleDir, 'lastHistoryId.' + account + '.pickle')
   if lastMessageId:
     q = s.query(MessageInfo).get(lastMessageId)
     with open(path, 'wb') as f:
@@ -76,7 +73,7 @@ def getLastHistoryId(account):
   '''
   Get the last history for account from the pickle if it exists.
   '''
-  path = os.path.join(PICKLE_DIR, 'lastHistoryId.' + account + '.pickle')
+  path = os.path.join(config.pickleDir, 'lastHistoryId.' + account + '.pickle')
   if os.path.exists(path):
     with open(path, 'rb') as f:
       return pickle.load(f)
@@ -131,8 +128,8 @@ def updateDb(account, service, lastHistoryId=None):
   '''
   # 100 is maximum size of batch!
   if lastHistoryId is None:
-    messageIds = ListMessagesMatchingQuery(service(account),
-                                           'me', query='newer_than:6m')
+    messageIds = listMessagesMatchingQuery(service(account),
+         'me', query='newer_than:' + config.syncFrom)
     addMessages(s, account, service(account), [m['id'] for m in messageIds])
     lastMessageId = messageIds[0]['id']
   else:
@@ -176,19 +173,19 @@ if __name__ == '__main__':
 
   if args.n == None:
     while 1:
-      for account in listAccounts():
+      for account in config.listAccounts():
         UserInfo.update(s, mkService(account))
       while 1:
-        for account in listAccounts():
+        for account in config.listAccounts():
           logger.info('Preparing to check for mail...')
-          if os.path.exists(DB_NAME):
+          if os.path.exists(config.dbPath):
             logger.info('Performing partial update...')
             updateDb(account, mkService, getLastHistoryId(account))
           else:
             logger.info('Performing full update...')
             updateDb(account, mkService)
           AddressBook.mk(account)
-        sleep(300)
+        sleep(config.updateFreq)
       sleep(3600)
   else:
     print(numOfUnreadMessages(args.n))

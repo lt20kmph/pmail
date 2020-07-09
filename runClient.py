@@ -10,8 +10,8 @@ import re
 
 from apiclient import errors
 from common import (mkService, s, Labels, MessageInfo, Attachments,
-                    ListMessagesMatchingQuery, removeLabels, addLabels, Session, logger,
-                    UserInfo, addMessages, addressList, listAccounts)
+                    listMessagesMatchingQuery, removeLabels, addLabels, Session, logger,
+                    UserInfo, addMessages, addressList, config)
 from itertools import cycle
 from sendMail import (sendMessage, mkSubject, mkTo, createMessage)
 from subprocess import run, PIPE, Popen
@@ -25,17 +25,20 @@ from uuid import uuid4
 def initColors():
   curses.start_color()
   curses.use_default_colors()
-  curses.init_pair(4, 4, -1)
-  curses.init_pair(5, 5, -1)
-  curses.init_pair(20, 4, 3)
-  curses.init_pair(21, 5, 3)
-  curses.init_pair(35, 3, 15)
-  # for i in range(16):
-  #   curses.init_pair(i, i, -1)
-  # for i in range(16, 32):
-  #   curses.init_pair(i, i - 16, 3)
-  # for i in range(32, 48):
-  #   curses.init_pair(i, i - 32, 15)
+  # Color pair for main list.
+  curses.init_pair(1, config.fg, config.bg)
+
+  # Color pair for selected messages. 
+  curses.init_pair(2, config.selFg, config.selBg)
+
+  # Color pair for hightlighted messages.
+  curses.init_pair(3, config.hiFg, config.hiBg)
+
+  # Color pair for hightlighted and selected messages.
+  curses.init_pair(4, config.selFg, config.hiBg)
+  
+  # Color pair for status bar.
+  curses.init_pair(5, config.stFg, config.stBg)
 
 # ---> Getting input and displaying messages
 
@@ -141,8 +144,10 @@ class StatusBarInfo():
 
     Returns: None
     '''
-    user = ' \uf007 '
-    seperator = '\uf054'
+    # user = ' \uf007 '
+    # seperator = '\uf054'
+    user = ' {} '.format(chr(config.user))
+    seperator = chr(config.seperator)
     lUser = len(user)
 
     account = ' {} {} {} '.format(
@@ -177,7 +182,7 @@ class StatusBarInfo():
     whitespace = ' {}'.format(
         ' ' * (width - mbLen - acLen - stLen - n - 1))
 
-    stdscr.attron(curses.color_pair(35))
+    stdscr.attron(curses.color_pair(5))
     stdscr.attron(curses.A_BOLD)
     stdscr.addstr(height - 2, 0, user)
     stdscr.attroff(curses.A_BOLD)
@@ -196,7 +201,7 @@ class StatusBarInfo():
 
     stdscr.addstr(height - 2, acLen + stLen +
                   mbLen + n + labelsLen, whitespace)
-    stdscr.attroff(curses.color_pair(35))
+    stdscr.attroff(curses.color_pair(5))
 
     if self.numOfHeaders > 0:
       snippet = ' On {} <{}> wrote: {} {}'.format(
@@ -309,13 +314,13 @@ def drawConfirmationScreen(stdscr, account, state):
           't': 'To',
           'c': 'Cc',
           'b': 'Bcc'}
-      stdscr.attron(curses.color_pair(4))
+      stdscr.attron(curses.color_pair(1))
       for i in range(c + l + 1, height - 2):
         stdscr.addstr(i, 0, ' ' * width)
       for i, key in enumerate(options.keys()):
         stdscr.addstr(c + i + l + 1, 3, '- {}: {}'.format(key,
                                                           options[key])[:width - 2])
-      stdscr.attroff(curses.color_pair(4))
+      stdscr.attroff(curses.color_pair(1))
       k = stdscr.getch()
       to = chooseAddress(account)
       if to:
@@ -351,7 +356,7 @@ def drawConfirmationScreen(stdscr, account, state):
       k = 0
       continue
 
-    stdscr.attron(curses.color_pair(4))
+    stdscr.attron(curses.color_pair(1))
     stdscr.attron(curses.A_BOLD)
     stdscr.addstr(c, 1, ("You are about to send an email." +
                          " Please verify the detials and press 'y' to send.")[:width - 2])
@@ -386,7 +391,7 @@ def drawConfirmationScreen(stdscr, account, state):
       stdscr.addstr(c + i + l + 1, 3, '- {}: {}'.format(key,
                                                         options[key])[:width - 4])
 
-    stdscr.attroff(curses.color_pair(4))
+    stdscr.attroff(curses.color_pair(1))
     stdscr.refresh()
     k = stdscr.getch()
 
@@ -452,20 +457,20 @@ def drawAttachments(stdscr, account, state, attachments):
     for i, a in enumerate(attachments[:height - 2]):
       display = a.display()
       l1 = len(display)
-      stdscr.attron(curses.color_pair(4))
+      stdscr.attron(curses.color_pair(1))
       if cursor_y == i:
-        stdscr.attron(curses.color_pair(20))
+        stdscr.attron(curses.color_pair(3))
         stdscr.attron(curses.A_BOLD)
         stdscr.addstr(i, 0, display)
         if (width - l1) > 0:
           stdscr.addstr(i, l1, " " * (width - l1))
         stdscr.attroff(curses.A_BOLD)
-        stdscr.attroff(curses.color_pair(20))
+        stdscr.attroff(curses.color_pair(3))
       else:
         stdscr.addstr(i, 0, display)
         if (width - l1) > 0:
           stdscr.addstr(i, l1, " " * (width - l1))
-      stdscr.attroff(curses.color_pair(4))
+      stdscr.attroff(curses.color_pair(1))
     for i in range(numOfAttachments, height - 2):
       stdscr.addstr(i, 0, ' ' * width)
 
@@ -792,36 +797,36 @@ def drawMessages(stdscr, getMessagesFunc, state):
       for i, h in enumerate(headers[:height - 2]):
         display = h.display(15, width)
         l1 = len(display)
-        stdscr.attron(curses.color_pair(4))
+        stdscr.attron(curses.color_pair(1))
         if cursor_y == i and h in selectedHeaders:
-          stdscr.attron(curses.color_pair(21))
+          stdscr.attron(curses.color_pair(4))
           stdscr.attron(curses.A_BOLD)
           stdscr.addstr(i, 0, display)
           if (width - l1) > 0:
             stdscr.addstr(i, l1, " " * (width - l1))
           stdscr.attroff(curses.A_BOLD)
-          stdscr.attroff(curses.color_pair(21))
+          stdscr.attroff(curses.color_pair(4))
         elif cursor_y == i:
-          stdscr.attron(curses.color_pair(20))
+          stdscr.attron(curses.color_pair(3))
           stdscr.attron(curses.A_BOLD)
           stdscr.addstr(i, 0, display)
           if (width - l1) > 0:
             stdscr.addstr(i, l1, " " * (width - l1))
           stdscr.attroff(curses.A_BOLD)
-          stdscr.attroff(curses.color_pair(20))
+          stdscr.attroff(curses.color_pair(3))
         elif h in selectedHeaders:
-          stdscr.attron(curses.color_pair(5))
+          stdscr.attron(curses.color_pair(2))
           stdscr.attron(curses.A_BOLD)
           stdscr.addstr(i, 0, display)
           if (width - l1) > 0:
             stdscr.addstr(i, l1, " " * (width - l1))
           stdscr.attroff(curses.A_BOLD)
-          stdscr.attroff(curses.color_pair(5))
+          stdscr.attroff(curses.color_pair(2))
         else:
           stdscr.addstr(i, 0, display)
           if (width - l1) > 0:
             stdscr.addstr(i, l1, " " * (width - l1))
-        stdscr.attroff(curses.color_pair(4))
+        stdscr.attroff(curses.color_pair(1))
       if numOfHeaders < height - 2:
         for i in range(numOfHeaders, height - 1):
           stdscr.addstr(i, 0, " " * width)
@@ -932,7 +937,7 @@ def postSend(service, sender, draftId, **kwargs):
   '''
 
   try:
-    with open(os.path.join(TMPDIR_REPLIES, draftId), 'r') as f:
+    with open(os.path.join(config.tmpDir, draftId), 'r') as f:
       message = createMessage(sender, f.read(), **kwargs)
     # Send the message.
     message = sendMessage(service(sender), sender, message)
@@ -941,7 +946,7 @@ def postSend(service, sender, draftId, **kwargs):
       header = kwargs['header']
       postRead(sender, service, header.messageId)
     # Clean up.
-    os.remove(os.path.join(TMPDIR_REPLIES, draftId))
+    os.remove(os.path.join(config.tmpDir, draftId))
     # Add message to local db.
     s = Session()
     addMessages(s, sender, service(sender), [message['id']])
@@ -1041,21 +1046,21 @@ def preSend(sender, state):
       state['to'] = mkTo(sender, header, state['action'])
 
     # First format the message.
-    formatedMessage = run(W3MARGS, input=message,
+    formatedMessage = run(config.w3mArgs(), input=message,
                           encoding='utf-8', stdout=PIPE)
 
     # Rewrite mkReplyInfo/mkForwardInfo...
     input = addInfo(header, formatedMessage, state['action'])
 
   # Check that tmp file doesn't exist and remove if it does.
-  if os.path.exists(os.path.join(TMPDIR_REPLIES, draftId)):
-    os.remove(os.path.join(TMPDIR_REPLIES, draftId))
+  if os.path.exists(os.path.join(config.tmpDir, draftId)):
+    os.remove(os.path.join(config.tmpDir, draftId))
 
   # Open the formated message in vim.
-  run(VIMARGS(draftId), input=input, encoding='utf-8')
+  run(config.vimArgs(draftId), input=input, encoding='utf-8')
 
   # Check that tmp file exists ready to be sent.
-  if os.path.exists(os.path.join(TMPDIR_REPLIES, draftId)):
+  if os.path.exists(os.path.join(config.tmpDir, draftId)):
     type = state['action'] if state['action'] in [
         'NEW', 'FORWARD'] else 'REPLY'
 
@@ -1151,7 +1156,7 @@ def saveAttachment(service, attachment):
             data = base64.urlsafe_b64decode(a['data'].
                                             encode('utf-8'))
 
-          path = os.path.join(DLS, part['filename'])
+          path = os.path.join(config.dlDir, part['filename'])
 
           with open(path, 'wb') as f:
             f.write(data)
@@ -1212,23 +1217,6 @@ def getAttachments(service, header):
 
 # <---
 
-
-# Move to config file.
-W3MARGS = ["w3m", "-T", "text/html", "-s", "-o", "display_image=False",
-           "-o", "confirm_qq=False", "-o", "auto_image=False"]
-TMPDIR_REPLIES = 'tmp/replies/'
-DLS = 'downloads/'
-
-
-def FZFARGS(prompt):
-  return ['fzf', '--prompt', prompt, '--color=16,gutter:-1,bg+:6',
-          '--print-query', '--no-clear']
-
-
-def VIMARGS(draftId):
-  return ["nvim", "-c", "set spell", "-c", "startinsert", "-c",
-          "f " + os.path.join(TMPDIR_REPLIES, draftId)]
-
 # ---> Searching and filtering.
 
 
@@ -1245,7 +1233,7 @@ def search(account, searchTerms):
   '''
   service = mkService(account)
   messageIds = [m['id'] for m in
-                ListMessagesMatchingQuery(service, 'me', query=searchTerms)]
+                listMessagesMatchingQuery(service, 'me', query=searchTerms)]
   addMessages(s, account, service, messageIds)
   q = s.query(MessageInfo).filter(MessageInfo.messageId.in_(messageIds))
   s.commit()
@@ -1334,7 +1322,7 @@ def fzf(prompt, iterable):
     line = re.sub('\r', '', line)
     if proc is None:
       proc = Popen(
-          FZFARGS(prompt),
+          config.fzfArgs(prompt),
           stdin=PIPE,
           stdout=PIPE,
           stderr=None
@@ -1404,7 +1392,7 @@ def mainLoop():
     # Read an email.
     elif state['action'] == 'READ':
       message = state['message']
-      run(W3MARGS, input=message, encoding='utf-8')
+      run(config.w3mArgs(), input=message, encoding='utf-8')
       t = Thread(target=postRead,
                  args=(state['account'], mkService, state['messageId']))
       state['thread'] = t
@@ -1429,12 +1417,12 @@ def mainLoop():
 
 if __name__ == '__main__':
   setEscDelay()
-  switcher = cycle(listAccounts())
+  switcher = cycle(config.listAccounts())
   mainLoop()
 
   # Clean up tmp files.
-  for f in os.listdir(TMPDIR_REPLIES):
-    os.remove(os.path.join(TMPDIR_REPLIES, f))
+  for f in os.listdir(config.tmpDir):
+    os.remove(os.path.join(config.tmpDir, f))
 # <---
 
 """
