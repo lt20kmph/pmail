@@ -42,6 +42,7 @@ class Config():
     self.logLevel = b['log_level']
     self.logPath = b['log_path']
     self.updateFreq = b['update_frequency']
+    self.port = b['port_number']
     
     am = y['appearance']['markers']
     ac = y['appearance']['colors']
@@ -59,6 +60,8 @@ class Config():
     self.stBg = ac['statusline_bg']
 
     self.accounts = y['accounts']
+
+    self.dbExists = False
 
   def listAccounts(self):
     return self.accounts.keys()
@@ -98,17 +101,17 @@ HEADERS = ['From', 'Subject', 'To', 'Reply-To', 'In-Reply-To',
            'References', 'Message-ID', 'Content-Type']
 
 logging.basicConfig(filename=os.path.join(WORKING_DIR, config.logPath),
-                    level=logging.DEBUG,
+                    level=logging.CRITICAL,
                     format='%(asctime)s :: %(levelname)s - %(message)s')
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 engine = create_engine(DB_PATH)
 Base = declarative_base(bind=engine)
 
-session_factory = sessionmaker(bind=engine)
+session_factory = sessionmaker(bind=engine, 
+    expire_on_commit=False)
 Session = scoped_session(session_factory)
-s = Session()
 
 # <---
 
@@ -258,38 +261,45 @@ class AddressBook(Base):
     self.address = address
 
   @classmethod
-  def mk(cls, account):
+  def mk(cls, account, session, message):
     '''
     Method to scour for email address in the MessageInfo table
     and sort them into uniques and add to the AddressBook table
     '''
-    # Could make this more effecient!
-    query = s.query(MessageInfo).filter(MessageInfo.emailAddress == account)
-    seen = set()
-    for q in query:
-      if q.sender in seen:
-        continue
-      else:
-        seen.add(re.sub('^ ', '', q.sender))
-      try:
-        all = filter(lambda x: not re.search(account, x),
-                     (q.recipients).split(','))
-      except:
-        pass
-      for a in all:
-        if a in seen:
-          continue
-        else:
-          seen.add(re.sub('^ ', '', a))
-    s.query(AddressBook).filter(AddressBook.account == account).delete()
-    s.commit()
+    q = session.query(cls).filter(cls.account == account)
 
-    for a in seen:
-      try:
-        s.add(AddressBook(account,a))
-        s.commit()
-      except:
-        logger.info('Cannot add: {}'.format(a))
+    addresses = [a.address for a in q]
+    newAddresses = set()
+
+    sender = message.sender.lower().strip()
+    if sender not in addresses:
+      newAddresses.add(sender)
+    try:
+      all = filter(lambda x: not re.search(account, x),
+                   (message.recipients).split(','))
+    except:
+      pass
+    for a in all:
+      if a not in addresses:
+        address = a.lower().strip()
+        if address not in addresses:
+          newAddresses.add(address)
+
+    # s.query(cls).filter(cls.account == account).delete()
+    # s.commit()
+    try:
+      session.add_all([cls(account,a) for a in newAddresses])
+      session.commit()
+    except:
+      logger.info('Something went wrong trying to add new addresses.')
+
+  @classmethod
+  def addressList(cls,account):
+    session = Session()
+    q = session.query(cls).filter(cls.account == account)
+    Session.remove()
+    for address in q:
+      yield address.address
 
 
 class UserInfo(Base):
@@ -301,40 +311,74 @@ class UserInfo(Base):
   totalMessages = Column(Integer)
   totalThreads = Column(Integer)
   historyId = Column(Integer)
+  numOfUnreadMessages = Column(Integer)
+  # TODO: check is lastHistoryId = historyId
+  # lastHistoryId = Column(String)
+  # token = Column(String)
   messages = relationship('MessageInfo', backref='user_info',
                           cascade='all, delete, delete-orphan')
   addressBook = relationship('AddressBook', backref='user_info',
                              cascade='all, delete, delete-orphan')
 
-  def __init__(self, emailAddress, totalMessages, totalThreads, historyId):
+  def __init__(self, emailAddress, totalMessages, totalThreads, historyId,
+               numOfUnreadMessages):
     self.emailAddress = emailAddress
     self.totalMessages = totalMessages
     self.totalThreads = totalThreads
     self.historyId = historyId
+    self.numOfUnreadMessages = numOfUnreadMessages
+
+
+  @staticmethod
+  def _numOfUnreadMessages(session, account):
+    '''
+    Get the number of unread messages in the INBOX.
+
+    Args:
+      account: The account to query.
+    Returns: An integer.
+    '''
+    q1 = session.query(Labels.messageId).filter(Labels.label == 'UNREAD')
+    q2 = session.query(Labels.messageId).filter(Labels.label == 'INBOX')
+    q = session.query(MessageInfo).filter(
+        MessageInfo.emailAddress == account,
+        MessageInfo.messageId.in_(q1),
+        MessageInfo.messageId.in_(q2))
+    count = q.count()
+    return count
 
   @classmethod
-  def update(cls, session, service):
+  def update(cls, session, account, service):
     '''
     Method to update UserInfo.
 
     Args:
+      account: emailAddress for which we are updating info.
       session: A DB session
-      service: API service.
+      service: API service. Possibly None, in this case we only update
+      numOfUnreadMessages.
     '''
-    profile = service.users().getProfile(userId='me').execute()
-    emailAddress = profile['emailAddress']
-    messagesTotal = profile['messagesTotal']
-    threadsTotal = profile['threadsTotal']
-    historyId = profile['historyId']
-    userInfo = cls(emailAddress, messagesTotal, threadsTotal, historyId)
-    q = session.query(cls)
-    if q.first():
-      session.query(cls).update(
-          {cls.totalMessages: messagesTotal,
-           cls.totalThreads: threadsTotal,
-           cls.historyId: historyId}, synchronize_session=False)
-    else:
-      session.add(userInfo)
+    numOfUnreadMessages = cls._numOfUnreadMessages(session, account)
+    logger.debug('Num of unreads {} for {}'\
+                 .format(numOfUnreadMessages,account))
+    q = session.query(cls).get(account)
+    if service:
+      profile = service.users().getProfile(userId='me').execute()
+      messagesTotal = profile['messagesTotal']
+      threadsTotal = profile['threadsTotal']
+      historyId = profile['historyId']
+      if q:
+        q.messagesTotal = messagesTotal
+        q.threadsTotal = threadsTotal
+        q.historyId = historyId
+        q.numOfUnreadMessages = numOfUnreadMessages
+      else:
+        userInfo = cls(account, messagesTotal, threadsTotal, historyId,
+                   numOfUnreadMessages)
+        session.add(userInfo)
+    elif q:
+      q.numOfUnreadMessages = numOfUnreadMessages
+    session.commit()
 
 
 class Labels(Base):
@@ -349,6 +393,41 @@ class Labels(Base):
   def __init__(self, messageId, label):
     self.messageId = messageId
     self.label = label
+
+  @classmethod
+  def addLabels(cls, session, labels):
+    '''
+    Add labels to messages.
+
+    Args:
+      session: A DB session.
+      labels: A list of pairs (m,ls) where m is a message
+      id and ls is a list of labels to add to the message.
+
+    Returns: None.
+    '''
+    for (messageId, ls) in labels:
+      for l in ls:
+        label =cls(messageId, l)
+        session.add(label)
+        session.commit()
+
+  @classmethod
+  def removeLabels(cls, session, labels):
+    '''
+    Remove labels to messages.
+
+    Args:
+      session: A DB session.
+      labels: A list of pairs (m,ls) where m is a message
+      id and ls is a list of labels to add to the message.
+
+    Returns: None.
+    '''
+    for (messageId, ls) in labels:
+      session.query(cls).filter(cls.messageId == messageId,cls.label.in_(ls))\
+          .delete(synchronize_session='fetch')
+      session.commit()
 
 # ---> MessageInfo class
 
@@ -374,7 +453,8 @@ class MessageInfo(Base):
   contentType = Column(String)
   hasAttachments = Column(Boolean)
   labels = relationship('Labels', backref='header_info',
-                        cascade="all, delete, delete-orphan")
+                        cascade="all, delete, delete-orphan",
+                        lazy='subquery')
   attachments = relationship('Attachments', backref='header_info',
                              cascade="all, delete, delete-orphan")
 
@@ -477,138 +557,120 @@ class MessageInfo(Base):
       else:
         return True
 
-# <---
+  @classmethod
+  def addMessage(cls, account, session, msg):
+    '''
+    Add a message to the db.
+    Args:
+      account: Account which owns the message.
+      session: A db session.
+      msg: The message to add.
+    '''
+    headers = dict(zip(HEADERS, [None for i in range(len(HEADERS))]))
+    for h in msg['payload']['headers']:
+      name = h['name']
+      for n in HEADERS:
+        if name.lower() == n.lower():
+          headers[n] = h['value']
 
-# <---
-
-# ---> Adding, removing and modifying messages
-
-
-def addMessage(account, session, msg):
-  '''
-  Add a message to the db.
-  Args:
-    account: Account which owns the message.
-    session: A db session.
-    msg: The message to add.
-  '''
-  headers = dict(zip(HEADERS, [None for i in range(len(HEADERS))]))
-  for h in msg['payload']['headers']:
-    name = h['name']
-    for n in HEADERS:
-      if name.lower() == n.lower():
-        headers[n] = h['value']
-
-    # if name == 'Subject':
-    #     subject = h['value']
-    # elif name == 'From':
-    #     sender = h['value']
-    # elif name == 'To':
-    #     recipients = h['value']
-
-  try:
-    labels = [Labels(msg['id'], label) for label in msg['labelIds']]
-    # logger.info(str([l for l in msg['labelIds']]))
-    session.add_all(labels)
-  except KeyError:
-    logger.debug('Could not add: ' + str(msg))
-    logger.debug("Adding label ['UNCLASSIFIED']")
-    session.add(Labels(msg['id'], 'UNCLASSIFIED'))
-  if headers['From']:
-    header = MessageInfo(
-        msg['id'],
-        account,
-        msg['historyId'],
-        msg['internalDate'],
-        msg['sizeEstimate'],
-        msg['snippet'],
-        headers['Message-ID'],
-        headers['Subject'],
-        headers['From'],
-        headers['Reply-To'],
-        headers['In-Reply-To'],
-        headers['References'],
-        headers['To'],
-        headers['Content-Type'])
-    session.add(header)
-    logger.debug('Adding header to db')
-  else:
-    logger.debug(str(headers))
-    logger.debug(str(msg))
-
-
-def addMessages(session, account, service, messageIds):
-  '''
-  Add many messages to the db.
-
-  Args: 
-    session: A db session.
-    account: The accoun which owns the messages
-    service: An API service.
-    messageIds: List of message ids which we are going to add.
-  '''
-  def doesMessageAlreadyExist(messageId):
-    q = session.query(MessageInfo).filter(MessageInfo.messageId == messageId)
-    if q.first():
-      return False
+    try:
+      labels = [Labels(msg['id'], label) for label in msg['labelIds']]
+      session.add_all(labels)
+    except KeyError:
+      logger.debug('Could not add: ' + str(msg))
+      logger.debug("Adding label ['UNCLASSIFIED']")
+      session.add(Labels(msg['id'], 'UNCLASSIFIED'))
+    if headers['From']:
+      header =cls(
+          msg['id'],
+          account,
+          msg['historyId'],
+          msg['internalDate'],
+          msg['sizeEstimate'],
+          msg['snippet'],
+          headers['Message-ID'],
+          headers['Subject'],
+          headers['From'],
+          headers['Reply-To'],
+          headers['In-Reply-To'],
+          headers['References'],
+          headers['To'],
+          headers['Content-Type'])
+      session.add(header)
+      # logger.debug('Adding header to db')
+      return header
     else:
-      return True
-  q = list(filter(doesMessageAlreadyExist, messageIds))
-  i, l, batch = 0, len(q), service.new_batch_http_request()
-  logger.debug('Making batch request..')
-  while i < l:
-    for messageId in q[i:i+100]:
-      batch.add(service.users().messages().get(
-          userId='me',
-          id=messageId,
-          format='metadata',
-          metadataHeaders=HEADERS
-      ), callback=(lambda x, y, z: _updateDb(session, account, x, y, z)))
-    batch.execute()
-    batch = service.new_batch_http_request()
-    i += 100
+      logger.debug(str(headers))
+      logger.debug(str(msg))
+      return None
+
+  @classmethod
+  def addMessages(cls, session, account, service, messageIds):
+    '''
+    Add many messages to the db.
+
+    Args: 
+      session: A db session.
+      account: The accoun which owns the messages
+      service: An API service.
+      messageIds: List of message ids which we are going to add.
+    '''
+    def doesMessageAlreadyExist(messageId):
+      q = session.query(cls).filter(cls.messageId == messageId)
+      if q.first():
+        return False
+      else:
+        return True
+
+    def _updateDb(session, account, requestId, response, exception):
+      '''
+      Helper function for batch requests.
+      
+      Args:
+        session: A DB session.
+        account: The account which the messages belong to.
+        requestId: Id of the request.
+        response: Response of the request (If succesful, this is the message)
+        exception: An exception if something went wrong.
+      '''
+      if exception is not None:
+        logger.debug(exception)
+        # Do something with the exception
+        # See BatchHttpRequest docs
+      else:
+        # Parse headers.
+        message = cls.addMessage(account, session, response)
+        if message:
+          AddressBook.mk(account, session, message)
+        
+    q = list(filter(doesMessageAlreadyExist, messageIds))
+    i, l, batch = 0, len(q), service.new_batch_http_request()
+    logger.debug('Making batch request..')
+
+    while i < l:
+      for messageId in q[i:i+100]:
+        batch.add(service.users().messages().get(
+            userId='me',
+            id=messageId,
+            format='metadata',
+            metadataHeaders=HEADERS
+        ), callback=(lambda x, y, z: _updateDb(session, account, x, y, z)))
+      batch.execute()
+      batch = service.new_batch_http_request()
+      i += 100
+    session.commit()
 
 
-def removeMessages(messageIds):
-  '''
-  Delete messages (Not in use currently and 
-  might need extra scopes to work.)
-  '''
-  s.query(MessageInfo).filter(MessageInfo.messageId in
-                              messageIds).delete(synchronize_session='fetch')
+  @classmethod
+  def removeMessages(cls, session, messageIds):
+    '''
+    Delete messages (Not in use currently and 
+    might need extra scopes to work.)
+    '''
+    session.query(cls).filter(cls.messageId in
+                                messageIds).delete(synchronize_session=False)
 
-
-def addLabels(session, labels):
-  '''
-  Add labels to messages.
-
-  Args:
-    session: A DB session.
-    labels: A list of pairs (m,ls) where m is a message
-    id and ls is a list of labels to add to the message.
-
-  Returns: None.
-  '''
-  for (messageId, ls) in labels:
-    for l in ls:
-      label = Labels(messageId, l)
-      session.add(label)
-
-
-def removeLabels(session, labels):
-  '''
-  Remove labels to messages.
-
-  Args:
-    session: A DB session.
-    labels: A list of pairs (m,ls) where m is a message
-    id and ls is a list of labels to add to the message.
-
-  Returns: None.
-  '''
-  for (messageId, ls) in labels:
-    session.query(Labels).filter(Labels.messageId == messageId, Labels.label.in_(ls))\
-        .delete(synchronize_session=False)
+# <---
 
 # <---
 
@@ -651,24 +713,6 @@ def listMessagesMatchingQuery(service, user_id, query=''):
 
 # ---> Db update functions
 
-def _updateDb(session, account, requestId, response, exception):
-  '''
-  Helper function for batch requests.
-  
-  Args:
-    session: A DB session.
-    account: The account which the messages belong to.
-    requestId: Id of the request.
-    response: Response of the request (If succesful, this is the message)
-    exception: An exception if something went wrong.
-  '''
-  if exception is not None:
-    logger.debug(exception)
-    # Do something with the exception
-    # See BatchHttpRequest docs
-  else:
-    # Parse headers.
-    addMessage(account, session, response)
 
 
 # <---
@@ -692,11 +736,6 @@ def countAttachments(message):
 def myEmail(service):
   return (service.users().getProfile(userId='me').execute())['emailAddress']
 
-
-def addressList(myemail):
-  q = s.query(AddressBook).filter(AddressBook.account == myemail)
-  for address in q:
-    yield address.address
 
 # <---
 

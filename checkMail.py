@@ -11,9 +11,7 @@ import argparse
 from apiclient import errors
 from common import (mkService, s, Labels, MessageInfo,
                     listMessagesMatchingQuery,
-                    HEADERS, removeMessages, addLabels,
-                    removeLabels, WORKING_DIR, logger,
-                    addMessages, UserInfo,
+                    logger, UserInfo,
                     AddressBook, config)
 from googleapiclient.http import BatchHttpRequest
 from time import sleep
@@ -130,7 +128,7 @@ def updateDb(account, service, lastHistoryId=None):
   if lastHistoryId is None:
     messageIds = listMessagesMatchingQuery(service(account),
          'me', query='newer_than:' + config.syncFrom)
-    addMessages(s, account, service(account), [m['id'] for m in messageIds])
+    MessageInfo.addMessages(s, account, service(account), [m['id'] for m in messageIds])
     lastMessageId = messageIds[0]['id']
   else:
     changes = ListHistory(service(account), 'me', getLastHistoryId(account))
@@ -149,10 +147,10 @@ def updateDb(account, service, lastHistoryId=None):
       if 'labelsRemoved' in change:
         labelsRemoved += [(c['message']['id'], c['labelIds']) for c in
                           change['labelsRemoved']]
-    addMessages(s, account, service(account), messagesAdded)
-    removeMessages(messagesDeleted)
-    addLabels(s, labelsAdded)
-    removeLabels(s, labelsRemoved)
+    MessageInfo.addMessages(s, account, service(account), messagesAdded)
+    MessageInfo.removeMessages(messagesDeleted)
+    Labels.addLabels(s, labelsAdded)
+    Labels.removeLabels(s, labelsRemoved)
     try:
       lastHistoryId = str(max([int(change['id']) for change in changes]))
     except:
@@ -178,13 +176,14 @@ if __name__ == '__main__':
       while 1:
         for account in config.listAccounts():
           logger.info('Preparing to check for mail...')
-          if os.path.exists(config.dbPath):
+          # if os.path.exists(config.dbPath):
+          if config.dbExists is True:
             logger.info('Performing partial update...')
             updateDb(account, mkService, getLastHistoryId(account))
-          else:
+          elif config.dbExists is False:
             logger.info('Performing full update...')
             updateDb(account, mkService)
-          AddressBook.mk(account)
+            config.dbExists = True
         sleep(config.updateFreq)
       sleep(3600)
   else:

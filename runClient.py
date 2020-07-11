@@ -6,12 +6,14 @@ import curses
 import email
 import errno
 import os
+import pickle
 import re
+import socket
 
 from apiclient import errors
-from common import (mkService, s, Labels, MessageInfo, Attachments,
-                    listMessagesMatchingQuery, removeLabels, addLabels, Session, logger,
-                    UserInfo, addMessages, addressList, config)
+from common import (mkService, Labels, MessageInfo, Attachments,
+                    listMessagesMatchingQuery, logger,
+                    UserInfo, AddressBook, config)
 from itertools import cycle
 from sendMail import (sendMessage, mkSubject, mkTo, createMessage)
 from subprocess import run, PIPE, Popen
@@ -28,7 +30,7 @@ def initColors():
   # Color pair for main list.
   curses.init_pair(1, config.fg, config.bg)
 
-  # Color pair for selected messages. 
+  # Color pair for selected messages.
   curses.init_pair(2, config.selFg, config.selBg)
 
   # Color pair for hightlighted messages.
@@ -36,7 +38,7 @@ def initColors():
 
   # Color pair for hightlighted and selected messages.
   curses.init_pair(4, config.selFg, config.hiBg)
-  
+
   # Color pair for status bar.
   curses.init_pair(5, config.stFg, config.stBg)
 
@@ -495,13 +497,11 @@ def drawMessages(stdscr, getMessagesFunc, state):
     getMessagesFunc: A filtering fuction to apply to the messages db.
   '''
   k = 0
-  # state = kwargs.get('state', None)
   if state:
     cursor_y = state.get('cursor_y', 0)
     position = state.get('position', 0)
     account = state['account']
     if 'thread' in state:
-      # (state['thread']).start()
       t = state.pop('thread', None)
       t.start()
 
@@ -645,7 +645,7 @@ def drawMessages(stdscr, getMessagesFunc, state):
     elif k == ord('d'):
       # Delete message in varous ways.
       k = stdscr.getch()
-      s = Session()
+      # s = Session()
       if len(selectedHeaders) == 0:
         selectedHeaders.append(selectedHeader)
       selectedIds = [h.messageId for h in selectedHeaders]
@@ -660,8 +660,13 @@ def drawMessages(stdscr, getMessagesFunc, state):
                  'messageIds': selectedIds}
         # Add 'TRASH' and remove 'UNREAD' labels.
         logger.info('Modify local label DB: + "TRASH", - "UNREAD".')
-        addLabels(s, [(id, ['TRASH']) for id in selectedIds])
-        removeLabels(s, [(id, ['UNREAD']) for id in selectedIds])
+        data = {'action': 'ADD_LABELS',
+                'labels': [(id, ['TRASH']) for id in selectedIds]}
+        sendToServer(data)
+        data = {'action': 'REMOVE_LABELS',
+                'labels': [(id, ['UNREAD']) for id in selectedIds]}
+        sendToServer(data)
+        # Labels.addLabels(s, [(id, ['TRASH']) for id in selectedIds])
 
       elif k == ord('r'):
         # Mark as read. Remove unread label but leave in INBOX.
@@ -673,7 +678,10 @@ def drawMessages(stdscr, getMessagesFunc, state):
                  'messageIds': selectedIds}
         # Remove 'UNREAD' labels.
         logger.info('Modify local label DB: - "UNREAD".')
-        removeLabels(s, [(id, ['UNREAD']) for id in selectedIds])
+        data = {'action': 'REMOVE_LABELS',
+                'labels': [(id, ['UNREAD']) for id in selectedIds]}
+        sendToServer(data)
+        # Labels.removeLabels(s, [(id, ['UNREAD']) for id in selectedIds])
 
       elif k == ord('t'):
         # Add to TRASH but don't read.
@@ -685,10 +693,13 @@ def drawMessages(stdscr, getMessagesFunc, state):
                  'messageIds': selectedIds}
         # Remove 'UNREAD' labels.
         logger.info('Modify local label DB: + "TRASH".')
-        addLabels(s, [(id, ['TRASH']) for id in selectedIds])
+        # Labels.addLabels(s, [(id, ['TRASH']) for id in selectedIds])
+        data = {'action': 'ADD_LABELS',
+                'labels': [(id, ['TRASH']) for id in selectedIds]}
+        sendToServer(data)
 
-      s.commit()
-      Session.remove()
+      # s.commit()
+      # Session.remove()
       headers = getMessagesFunc(position, height, excludedLabels,
                                 includedLabels, False)
       numOfHeaders = getMessagesFunc(position, height, excludedLabels,
@@ -742,7 +753,7 @@ def drawMessages(stdscr, getMessagesFunc, state):
       # Clear search terms.
       if searchTerms:
         getMessagesFunc = (lambda a, b, c, d, e:
-                           getMessages(account, Session().query(MessageInfo), a, b, c, d, e))
+                           getMessages(account, None, a, b, c, d, e))
         searchTerms = None
         position = 0
         headers = getMessagesFunc(position, height, excludedLabels,
@@ -768,7 +779,7 @@ def drawMessages(stdscr, getMessagesFunc, state):
       # Toggle between accounts.
       account = next(switcher)
       getMessagesFunc = (lambda a, b, c, d, e:
-                         getMessages(account, Session().query(MessageInfo), a, b, c, d, e))
+                         getMessages(account, None, a, b, c, d, e))
       position = 0
       headers = getMessagesFunc(position, height, excludedLabels,
                                 includedLabels, False)
@@ -948,10 +959,10 @@ def postSend(service, sender, draftId, **kwargs):
     # Clean up.
     os.remove(os.path.join(config.tmpDir, draftId))
     # Add message to local db.
-    s = Session()
-    addMessages(s, sender, service(sender), [message['id']])
-    s.commit()
-    Session.remove()
+    data = {'action': 'ADD_MESSAGES',
+            'account': sender,
+            'messageIds': [message['id']]}
+    sendToServer(data)
     # make this message more useful!
     logger.info('Email sent successfully.')
   except Exception as e:
@@ -974,10 +985,13 @@ def postRead(account, service, messageId):
   # Mark message as read.
   # Remove 'UNREAD' label from local storage.
   logger.info('Removing label from local storage.')
-  s = Session()
-  removeLabels(s, [(messageId, ['UNREAD'])])
-  s.commit()
-  Session.remove()
+  data = {'action': 'REMOVE_LABELS',
+          'labels': [(messageId, ['UNREAD'])]}
+  sendToServer(data)
+  # s = Session()
+  # Labels.removeLabels(s, [(messageId, ['UNREAD'])])
+  # s.commit()
+  # Session.remove()
   # Remove unread label from Google servers.
   logger.info('Removing label from Google servers.')
   body = {'removeLabelIds': ['UNREAD'], 'addLabelIds': []}
@@ -1180,10 +1194,14 @@ def getAttachments(service, header):
   '''
   messageId = header.messageId
   attachments = []
-  q = s.query(Attachments).filter(Attachments.messageId == messageId)
-  if q.first():
+  data = {'action': 'GET_QUERY',
+          'class': Attachments,
+          'messageIds': [messageId]}
+  q = sendToServer(data)
+  # q = s.query(Attachments).filter(Attachments.messageId == messageId)
+  if len(q) > 0:
     # Attachment info exists in db - use this.
-    attachments = q.all()
+    attachments = q
   else:
     # Fetch attachment info.
     try:
@@ -1198,7 +1216,10 @@ def getAttachments(service, header):
               part['filename'],
               part['mimeType'],
               part['body']['size'])
-          s.add(a)
+          # s.add(a)
+          data = {'action': 'ADD_ATTACHMENT',
+                  'attachment': a}
+          sendToServer(data)
           attachments.append(a)
 
     except errors.HttpError as e:
@@ -1206,10 +1227,13 @@ def getAttachments(service, header):
   if len(attachments) == 0:
     # In the future this can probably happen automagically.
     logger.info('Attempting to remove false positive attachment signal')
-    q = s.query(MessageInfo).filter(MessageInfo.messageId == messageId)\
-        .update({MessageInfo.hasAttachments: False},
-                synchronize_session='evaluate')
-    s.commit()
+    data = {'action': 'REMOVE_FALSE_ATTACMENTS',
+            'messageId': messageId}
+    sendToServer(data)
+    # q = s.query(MessageInfo).filter(MessageInfo.messageId == messageId)\
+    #     .update({MessageInfo.hasAttachments: False},
+    #             synchronize_session='evaluate')
+    # s.commit()
     logger.info('Signal removed.')
   else:
     return attachments
@@ -1234,15 +1258,19 @@ def search(account, searchTerms):
   service = mkService(account)
   messageIds = [m['id'] for m in
                 listMessagesMatchingQuery(service, 'me', query=searchTerms)]
-  addMessages(s, account, service, messageIds)
-  q = s.query(MessageInfo).filter(MessageInfo.messageId.in_(messageIds))
-  s.commit()
-  return q
+  data = {'action': 'ADD_MESSAGES',
+          'account': account,
+          'messageIds': messageIds}
+  sendToServer(data)
+  data = {'action': 'GET_QUERY',
+          'class': MessageInfo,
+          'messageIds': messageIds}
+  return [q.messageId for q in sendToServer(data)]
 
 
 def listFiles(directory):
   '''
-  List the files in directory as a 
+  List the files in directory as a
   generator.
   '''
   for root, _, files in os.walk(directory):
@@ -1250,47 +1278,13 @@ def listFiles(directory):
       yield os.path.join(root, f)
 
 
-def getMessages(account, query, position, height, excludedLabels=[],
-                includedLabels=[], count=False):
-  '''
-  Get a list of messages to display.
-
-  Args:
-    account: The currently selected account.
-    query: A query, by default it is just the full list of messages 
-    but can also be affected by searches if a search is in effect.
-    position: The position of the currently highlighted message.
-    height: The height of the stdscr.
-    excludedLabels: Any labels to exclude,
-    includedLabels: Any labels to include.
-    count: if True then only return the count.
-
-  Returns:
-    Either a list of MessageInfo objects or
-    an integer (depending on truthiness of count).
-  '''
-  excludeQuery = s.query(Labels.messageId).filter(
-      Labels.label.in_(excludedLabels))
-  includeQuery = s.query(Labels.messageId).filter(
-      Labels.label.in_(includedLabels))
-  q = query\
-      .filter(
-          MessageInfo.emailAddress == account,
-          ~MessageInfo.messageId.in_(excludeQuery),
-          MessageInfo.messageId.in_(includeQuery))\
-      .order_by(MessageInfo.time.desc())
-  if count == False:
-    return [h for h in q.slice(position, position+height-2)]
-  elif count == True:
-    return q.count()
-
-
 def chooseAttachment(x): return fzf(
     'Choose an attachment: ', listFiles(x))
 
 
 def chooseAddress(x): return fzf(
-    'To: ', addressList(x))
+    'To: ', AddressBook.addressList(x))
+
 
 '''
 # Wrapper for fzf to dump and restore window state before and after.
@@ -1356,12 +1350,55 @@ def fzf(prompt, iterable):
 # ---> Main
 
 
+def sendToServer(data):
+  host = socket.gethostname()
+  port = config.port
+  sock = socket.socket()
+  bufferSize = 1024
+
+  try:
+    sock.connect((host, port))
+    pickledData = pickle.dumps(data)
+    sizeOfPickle = len(pickledData)
+    numOfChunks = sizeOfPickle//bufferSize + 1
+    sock.send(sizeOfPickle.to_bytes(4, 'big'))
+
+    for i in range(numOfChunks):
+      sock.send(pickledData[i*bufferSize: (i+1)*bufferSize])
+
+    sizeOfResponse = int.from_bytes(sock.recv(4), 'big')
+    response = b''
+
+    while len(response) < sizeOfResponse:
+      response += sock.recv(bufferSize)
+
+    unpickledResponse = pickle.loads(response)
+    sock.close()
+    return unpickledResponse
+
+  except:
+    logger.info('Could not connect to pmailServer')
+
+
 def setEscDelay():
   '''   
   This is needed so that when pressing ESCAPE to exit from the getInput
   function there is no noticable delay.
   '''
   os.environ.setdefault('ESCDELAY', '25')
+
+
+def getMessages(account, query, position, height, excludedLabels,
+                includedLabels, count):
+  data = {'action': 'GET_MESSAGES',
+          'account': account,
+          'query': query,
+          'position': position,
+          'height': height,
+          'excludedLabels': excludedLabels,
+          'includedLabels': includedLabels,
+          'count': count}
+  return sendToServer(data)
 
 
 def mainLoop():
@@ -1381,7 +1418,7 @@ def mainLoop():
     state = curses.wrapper(
         lambda x: drawMessages(
             x, lambda a, b, c, d, e: getMessages(
-                state['account'], s.query(MessageInfo), a, b, c, d, e
+                state['account'], None, a, b, c, d, e
             ), state=state))
     # Process state.
 
