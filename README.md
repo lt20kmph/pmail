@@ -20,6 +20,10 @@ current set of features is listed below.
 Of course Pmail is heavily inspired
 by [mutt][6] but aims to be a much simpler more usable client for Gmail users.
 
+### Obligatory screenshot
+
+![screenshot][screenshot]
+
 ## Features
 
 - Send, receive, reply, forward emails.
@@ -179,3 +183,4 @@ attempt to run the client/server over any network you do not completely trust
 [4]: https://neovim.io/
 [5]: https://github.com/junegunn/fzf
 [6]: http://www.mutt.org/
+[screenshot]: https://github.com/lt20kmph/pmail/scrot.png "Screenshot"
