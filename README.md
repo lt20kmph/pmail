@@ -183,4 +183,4 @@ attempt to run the client/server over any network you do not completely trust
 [4]: https://neovim.io/
 [5]: https://github.com/junegunn/fzf
 [6]: http://www.mutt.org/
-[screenshot]: https://github.com/lt20kmph/pmail/scrot.png "Screenshot"
+[screenshot]: https://raw.githubusercontent.com/lt20kmph/pmail/master/scrot.png "Screenshot"
