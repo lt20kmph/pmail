@@ -5,19 +5,15 @@
 Pmail aims to be a usable, terminal based client for Googles Gmail service
 Pmail is built on top of the Gmail API, using python, hence the p.
 Pmail is supposed to integrate well with other terminal utilities, it uses
-[W3m][2] for parsing emails, [Vim][3]([Neovim][4]) for editing and composing
+[W3m][2] for parsing emails, [Vim][3] ([Neovim][4]) for editing and composing
 emails and integrates [fzf][5] for fuzzy finding email addresses and as a file
 picker for choosing attachments.
 As of now I haven't tested with other programs in place of
 these but in principle it should be possible to use other programs in their
-places
+places.
 
 The motivation to develop Pmail comes from a growing frustration with getting
 [mutt][6] and the related msmpt/offlineimap configuration functional.
-After something happening to my msmtp configuration and being unable to send
-emails and discovering that it looked like the way to get it to work seemed to
-be a hack involving enabling the Gmail API I thought maybe its better to 
-just use the API directly.
 
 Pmail does not aim to implement all features available through the API, the
 current set of features is listed below.
@@ -26,27 +22,26 @@ by [mutt][6] but aims to be a much simpler more usable client for Gmail users.
 
 ## Features
 
-- Send, receive, reply, foreword emails.
-- Keyboard driven interface with vimish bindings
+- Send, receive, reply, forward emails.
+- Keyboard driven interface with vimish bindings.
 - Lightweight.
 - View emails using W3m.
 - Compose emails with Vim.
 - Fuzzy search through contacts using fzf, no need for an address book.
 - Sort messages according with Gmails label system.
 - Manipulate labels easily. (mark as read, move to trash, etc..)
-- Separate client and server programs
+- Separate client and server programs.
 
 Pmail implements a client/server pair. The server is supposed to be run in the
 background (for example via a systemd service) and it serves two purposes.
 First it is supposed to keep a local database containing information about the
 users mailbox in sync with the remote version kept by Google.
-Second, it handles all data base related functionality for the client.
-The advantage of this is it allows the use of a sqlite database with out having
-to worry about concurrency issues since all of the database functionality is
-happing inside one program and so locks from pythons threading module can be
-used to avoid race conditions.
-The local database is not a fully copy of the inbox, it only stores information
-contained in the header fields of the emails.
+Second, it handles all database related functionality for the client.
+The advantage of this is it allows the use of a sqlite database 
+since concurrency issues can be handled between different threads of the same
+program quite easily using Lock objects from pythons threading module. 
+The local database is not a full copy of the remote inbox, it only stores 
+information contained in the header fields of the emails (more or less).
 If you want to read an email then it must be downloaded and so a network
 connection is required.
 
@@ -79,10 +74,25 @@ everything went successfully after a few minutes you should have synced a local
 copy of your mailbox and you can run the runClient.py and the client should
 start up and you should see a list of your messages.
 
+### Dependencies
+
+You will also need to install W3m, vim and fzf if you wish to use all the
+features of Pmail.
+You will also require the following python packages:
+
+- google-api-python-client 
+- google-auth-httplib2 
+- google-auth-oauthlib
+- sqlalchemy
+- yaml
+
+These can be install with pip or however else you like to install python
+modules.
+
 ## Usage Instructions
 
 Use the arrow keys or j/k to scroll up and down through the message list.
-You can also use pageup/pagedown keys to scroll faster.
+You can also use PAGEUP/PAGEDOWN keys to scroll faster.
 The selected email is highlighted as you scroll.
 The following key bindings are available.
 
@@ -154,6 +164,14 @@ Also keep this file safe.
 Communications between the server and client parts of the program is incredibly
 primitive and no form of encryption is currently implemented. Therefore, do no
 attempt to run the client/server over any network you do not completely trust
+
+## Limitations and TODO
+
+- If database gets too large then scrolling is sluggish.
+- The algorithm to detect attachments is unreliable.
+- Handle searches with large number of results differently.
+- Improve error handling and logging. 
+
 
 [1]: https://developers.google.com/gmail/api/quickstart/python
 [2]: http://w3m.sourceforge.net/
