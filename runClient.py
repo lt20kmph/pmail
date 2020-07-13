@@ -17,7 +17,7 @@ from common import (mkService, Labels, MessageInfo, Attachments,
 from itertools import cycle
 from sendMail import (sendMessage, mkSubject, mkTo, createMessage)
 from subprocess import run, PIPE, Popen
-from threading import Thread
+from threading import Thread, Event
 from uuid import uuid4
 # <---
 
@@ -504,6 +504,9 @@ def drawMessages(stdscr, getMessagesFunc, state):
     if 'thread' in state:
       t = state.pop('thread', None)
       t.start()
+      if 'event' in state:
+        e = state.pop('event',None)
+        e.wait()
 
   # Start colors in curses
   curses.curs_set(0)
@@ -511,7 +514,8 @@ def drawMessages(stdscr, getMessagesFunc, state):
 
   excludedLabels = ['SPAM', 'TRASH']
   includedLabels = ['INBOX']
-  searchTerms = None
+  searchTerms = state.get('searchTerms', None)
+  getMessagesFunc = state.get('getMessagesFunc', getMessagesFunc)
   showLabels = False
   headers = getMessagesFunc(position, 45, excludedLabels, includedLabels,
                             False)
@@ -747,6 +751,8 @@ def drawMessages(stdscr, getMessagesFunc, state):
                                   includedLabels, False)
         numOfHeaders = getMessagesFunc(position, height, excludedLabels,
                                        includedLabels, True)
+        state['getMessagesFunc'] = getMessagesFunc
+        state['searchTerms'] = searchTerms
       curses.curs_set(0)
 
     elif k == ord('c'):
@@ -764,12 +770,16 @@ def drawMessages(stdscr, getMessagesFunc, state):
     elif k == ord('v'):
       # View attachments.
       attachments = getAttachments(mkService(account), selectedHeader)
+      headers = getMessagesFunc(position, height, excludedLabels,
+                                  includedLabels, False)
       if attachments:
         state = {
             'action': 'VIEW_ATTACHMENTS',
             'account': account,
             'cursor_y': cursor_y,
             'position': position,
+            'getMessagesFunc': getMessagesFunc,
+            'searchTerms': searchTerms,
             'continue': True,
             'attachments': attachments
         }
@@ -925,13 +935,14 @@ def postDelete(state, service, messageIds):
     logger.debug(e)
 
 
-def postSend(service, sender, draftId, **kwargs):
+def postSend(service, event, sender, draftId, **kwargs):
   '''
   Actually send the message. 
   Gets run in a thread while the mainloop restarts.
 
   Args:
     service: API service object.
+    event: threading.Event object - set it to true once local db has updated.
     sender: Whoever is sending email.
     draftId: The id corresponding to the tmp file of the message text.
 
@@ -955,7 +966,7 @@ def postSend(service, sender, draftId, **kwargs):
     # Mark it as read if it wasn't already.
     if kwargs['type'] in ['REPLY', 'FORWARD']:
       header = kwargs['header']
-      postRead(sender, service, header.messageId)
+      postRead(sender, event, service, header.messageId)
     # Clean up.
     os.remove(os.path.join(config.tmpDir, draftId))
     # Add message to local db.
@@ -970,12 +981,13 @@ def postSend(service, sender, draftId, **kwargs):
     logger.warning(e)
 
 
-def postRead(account, service, messageId):
+def postRead(account, event, service, messageId):
   '''
   Mark message as read after reading.
 
   Args:
     account: The currently selected account.
+    event: threading.Event object - set it to true once local db has updated.
     service: The google API service object.
     messageId: The id of the highlighted message.
 
@@ -988,10 +1000,8 @@ def postRead(account, service, messageId):
   data = {'action': 'REMOVE_LABELS',
           'labels': [(messageId, ['UNREAD'])]}
   sendToServer(data)
-  # s = Session()
-  # Labels.removeLabels(s, [(messageId, ['UNREAD'])])
-  # s.commit()
-  # Session.remove()
+  # Set event to true so that main thread can continue.
+  event.set()
   # Remove unread label from Google servers.
   logger.info('Removing label from Google servers.')
   body = {'removeLabelIds': ['UNREAD'], 'addLabelIds': []}
@@ -1083,8 +1093,9 @@ def preSend(sender, state):
 
     # Make the thread.
     if state['action'] == 'SEND':
+      finishedUpdatingLocalDb = Event()
       t = Thread(target=postSend,
-                 args=(mkService, sender, draftId),
+                 args=(mkService, finishedUpdatingLocalDb, sender, draftId),
                  kwargs={'type': type,
                          'attachments': state['attachments'],
                          'to': state['to'],
@@ -1093,6 +1104,7 @@ def preSend(sender, state):
                          'subject': state['subject'],
                          'header': header})
       state['thread'] = t
+      state['event'] = finishedUpdatingLocalDb
     elif state['action'] == 'DO_NOT_SEND':
       state.pop('thread', None)
   else:
@@ -1430,9 +1442,11 @@ def mainLoop():
     elif state['action'] == 'READ':
       message = state['message']
       run(config.w3mArgs(), input=message, encoding='utf-8')
+      finishedUpdatingLocalDb = Event()
       t = Thread(target=postRead,
-                 args=(state['account'], mkService, state['messageId']))
+                 args=(state['account'], finishedUpdatingLocalDb, mkService, state['messageId']))
       state['thread'] = t
+      state['event'] = finishedUpdatingLocalDb
 
     # Send an email.
     elif state['action'] in ['REPLY', 'FORWARD', 'NEW', 'REPLYTOALL']:

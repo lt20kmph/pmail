@@ -1,0 +1,78 @@
+# Global Settings
+
+## Behaviour
+behaviour:
+  # From how far back to fetch emails on the initial sync. E.g. 3w, 6m, 2y...
+  sync_from: '3m'
+
+  # Command for the editor - probably won't work if you try to change this to a
+  # non vim command.
+  editor: 'nvim -c set spell -c startinsert -c'
+
+  # Command for the pager. You can try to change this - as long as its a program
+  # that can read from stdin and output to stdout it *should* work, but I
+  # haven't tested.
+  pager: 'w3m -T text/html -s -o display_image=False -o confirm_qq=False -o auto_image=False'
+
+  # File picker/addess picker, you might be able to substitute this too, also
+  # untested.
+  picker: 'fzf --color=16,gutter:-1,bg+:6 --print-query --no-clear'
+
+  # Where to store tempory files replies.
+  tmp_directory: 'tmp/replies'
+
+  # Where your token.pickle files get stored.
+  pickle_directory: 'tmp/pickles'
+
+  # Where to store saved attachments.
+  download_directory: 'tmp/downloads'
+
+  # Where to put the local database.
+  db_path: 'pmail.db'
+
+  # Log level - this doesn't do anything yet.
+  log_level: none
+
+  # Where to store the log.
+  log_path: 'pmail.log'
+
+  # How frequently to check for new mail (seconds).
+  update_frequency: 300
+
+  # Port used by pmailServer and runClient for communications.
+  port_number: 5656
+
+## Appearance
+appearance:
+  markers:
+    # These are the integers returned by pythons 'ord'
+    # funtion applied to the unicode strings, e.g. '\uf02b'.
+    # For some reason if the strings are imported from here they do
+    # not get interpreted as unicode strings.
+    unread: 61664
+    attachment: 61483
+    user: 61447
+    seperator: 61524
+
+  colors:
+    # You can use numbers the standard 256 terminal colors.
+    # -1 is no color, so it will be your terminals background color.
+    bg: -1
+    fg: 4
+    highlighted_bg: 3
+    highlighted_fg: 5
+    selected_bg: -1
+    selected_fg: 7
+    statusline_bg: 15
+    statusline_fg: 3
+
+# Accounts
+accounts:
+  youremail@gmail.com
+    id: 'id' #Not useful yet
+    name: 'Your name' # To appear on sent emails.
+    credentials: 'path/to/your/credentials'
+  # yourotheremail@gmail.com
+  #   id:
+  #   name:
+  #   credentials:

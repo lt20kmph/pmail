@@ -38,24 +38,32 @@ def storeLastHistoryId(account, session, lastMessageId=None, lastHistoryId=None)
   Returns:
     None
   '''
-  path = os.path.join(config.pickleDir, 'lastHistoryId.' + account + '.pickle')
+  # path = os.path.join(config.pickleDir, 'lastHistoryId.' + account + '.pickle')
   if lastMessageId:
-    q = session.query(MessageInfo).get(lastMessageId)
-    with open(path, 'wb') as f:
-      pickle.dump(q.historyId, f)
+    lastHistoryId = session.query(MessageInfo).get(lastMessageId).historyId
+    q = session.query(UserInfo).get(account)
+    q.historyId = lastHistoryId
+    session.commit()
+    # with open(path, 'wb') as f:
+    #   pickle.dump(q.historyId, f)
   elif lastHistoryId:
-    with open(path, 'wb') as f:
-      pickle.dump(lastHistoryId, f)
+    q = session.query(UserInfo).get(account)
+    q.historyId = lastHistoryId
+    session.commit()
+    # with open(path, 'wb') as f:
+    #   pickle.dump(lastHistoryId, f)
 
 
-def getLastHistoryId(account):
+def getLastHistoryId(account,session):
   '''
   Get the last history for account from the pickle if it exists.
   '''
-  path = os.path.join(config.pickleDir, 'lastHistoryId.' + account + '.pickle')
-  if os.path.exists(path):
-    with open(path, 'rb') as f:
-      return pickle.load(f)
+  # path = os.path.join(config.pickleDir, 'lastHistoryId.' + account + '.pickle')
+  # if os.path.exists(path):
+  #   with open(path, 'rb') as f:
+  #     return pickle.load(f)
+  return session.query(UserInfo).get(account).historyId
+
 
 # <---
 
@@ -115,7 +123,8 @@ def updateDb(account, session, service, lastHistoryId=None):
                             service(account), [m['id'] for m in messageIds])
     lastMessageId = messageIds[0]['id']
   else:
-    changes = ListHistory(service(account), 'me', getLastHistoryId(account))
+    changes = ListHistory(service(account), 'me',
+                          getLastHistoryId(account,session))
     messagesAdded, messagesDeleted = [], []
     labelsAdded, labelsRemoved = [], []
     for change in changes:
@@ -140,8 +149,11 @@ def updateDb(account, session, service, lastHistoryId=None):
     except:
       lastHistoryId = None
     lastMessageId = None
-  storeLastHistoryId(account, session, lastMessageId=lastMessageId,
-                     lastHistoryId=lastHistoryId)
+  # storeLastHistoryId(account, session, lastMessageId=lastMessageId,
+  #                    lastHistoryId=lastHistoryId)
+  if lastMessageId:
+    lastHistoryId = session.query(MessageInfo).get(lastMessageId).historyId
+  return lastHistoryId
 
 # <---
 
@@ -269,7 +281,7 @@ def pmailServer(lock):
 
     if action == 'REMOVE_LABELS':
       for account in config.listAccounts():
-        UserInfo.update(s,account,None)
+        UserInfo.update(s,account,None,None)
     s.commit()
     s.close()
     print('closing connection..')
@@ -279,38 +291,37 @@ def pmailServer(lock):
 def syncDb(lock):
   s = Session()
   while 1:
-    try:
-      with open(os.path.join(config.pickleDir, 'synced.pickle'), 'rb') as f:
-        shouldIupdate = pickle.load(f)
-    except:
-      shouldIupdate = True
+    # try:
+    #   with open(os.path.join(config.pickleDir, 'synced.pickle'), 'rb') as f:
+    #     shouldIupdate = pickle.load(f)
+    # except:
+    #   shouldIupdate = True
     try:
       with lock:
         logger.info('Aquiered lock, making session')
         # if os.path.exists(config.dbPath):
-        if shouldIupdate == False:
-          for account in config.listAccounts():
+        for account in config.listAccounts():
+          shouldIupdate = s.query(UserInfo).get(account)
+          if shouldIupdate and shouldIupdate.shouldIupdate == False:
             logger.info('Performing partial update for {}'.format(account))
-            updateDb(account, s, mkService, getLastHistoryId(account))
-            UserInfo.update(s, account, None)
+            lastHistoryId = updateDb(account, s, mkService,
+                     getLastHistoryId(account, s))
+            UserInfo.update(s, account, None, lastHistoryId)
             logger.info('Successfully update {}'.format(account))
-        else:
-          for account in config.listAccounts():
+          elif shouldIupdate is None or shouldIupdate.shouldIupdate == True:
             logger.info('Performing full update for {}'.format(account))
-            updateDb(account, s, mkService)
-            UserInfo.update(s, account, mkService(account))
+            lastHistoryId = updateDb(account, s, mkService)
+            UserInfo.update(s, account, mkService(account), lastHistoryId)
             logger.info('Successfully update {}'.format(account))
             with open(os.path.join(config.pickleDir,
                                    'synced.pickle'), 'wb') as f:
               pickle.dump(False, f)
       s.close()
     except KeyboardInterrupt as k:
-      print(k)
+      print("Bye!")
+      sys.exit()
     sleep(config.updateFreq)
 
-  print("Bye!")
-
-  sys.exit()
 
 
 if __name__ == '__main__':

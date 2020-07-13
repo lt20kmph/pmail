@@ -277,13 +277,12 @@ class AddressBook(Base):
     try:
       all = filter(lambda x: not re.search(account, x),
                    (message.recipients).split(','))
-    except:
-      pass
-    for a in all:
-      if a not in addresses:
+      for a in all:
         address = a.lower().strip()
         if address not in addresses:
           newAddresses.add(address)
+    except:
+      pass
 
     # s.query(cls).filter(cls.account == account).delete()
     # s.commit()
@@ -312,8 +311,7 @@ class UserInfo(Base):
   totalThreads = Column(Integer)
   historyId = Column(Integer)
   numOfUnreadMessages = Column(Integer)
-  # TODO: check is lastHistoryId = historyId
-  # lastHistoryId = Column(String)
+  shouldIupdate = Column(Boolean)
   # token = Column(String)
   messages = relationship('MessageInfo', backref='user_info',
                           cascade='all, delete, delete-orphan')
@@ -327,6 +325,7 @@ class UserInfo(Base):
     self.totalThreads = totalThreads
     self.historyId = historyId
     self.numOfUnreadMessages = numOfUnreadMessages
+    self.shouldIupdate = True
 
 
   @staticmethod
@@ -348,7 +347,7 @@ class UserInfo(Base):
     return count
 
   @classmethod
-  def update(cls, session, account, service):
+  def update(cls, session, account, service, lastHistoryId):
     '''
     Method to update UserInfo.
 
@@ -356,28 +355,30 @@ class UserInfo(Base):
       account: emailAddress for which we are updating info.
       session: A DB session
       service: API service. Possibly None, in this case we only update
-      numOfUnreadMessages.
+      numOfUnreadMessages and possibly the lastHistoryId.
+      lastHistoryId: The history id from the last time the db was updated. 
+      Possibly None, in which case do not update!
     '''
     numOfUnreadMessages = cls._numOfUnreadMessages(session, account)
-    logger.debug('Num of unreads {} for {}'\
-                 .format(numOfUnreadMessages,account))
     q = session.query(cls).get(account)
     if service:
       profile = service.users().getProfile(userId='me').execute()
       messagesTotal = profile['messagesTotal']
       threadsTotal = profile['threadsTotal']
-      historyId = profile['historyId']
+      # historyId = profile['historyId']
       if q:
         q.messagesTotal = messagesTotal
         q.threadsTotal = threadsTotal
-        q.historyId = historyId
+        q.historyId = lastHistoryId
         q.numOfUnreadMessages = numOfUnreadMessages
       else:
-        userInfo = cls(account, messagesTotal, threadsTotal, historyId,
+        userInfo = cls(account, messagesTotal, threadsTotal, lastHistoryId,
                    numOfUnreadMessages)
         session.add(userInfo)
     elif q:
       q.numOfUnreadMessages = numOfUnreadMessages
+      if lastHistoryId:
+        q.historyId = lastHistoryId
     session.commit()
 
 
