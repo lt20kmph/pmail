@@ -93,8 +93,6 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.settings.basic']
 
 
-# DB_NAME = 'afsec.db'
-
 DB_PATH = 'sqlite:///' + WORKING_DIR + '/' + config.dbPath
 
 HEADERS = ['From', 'Subject', 'To', 'Reply-To', 'In-Reply-To',
@@ -441,7 +439,7 @@ class MessageInfo(Base):
   messageId = Column(String, primary_key=True)
   emailAddress = Column(String, ForeignKey('user_info.emailAddress'))
   historyId = Column(String)
-  time = Column(String)
+  time = Column(String, index=True)
   size = Column(Integer)
   snippet = Column(String)
   externalId = Column(String)
@@ -488,10 +486,16 @@ class MessageInfo(Base):
     Reurns:
       A formatted string.
     '''
-    if 'UNREAD' in [l.label for l in self.labels]:
-      marker = chr(config.unread) + ' '
-    else:
-      marker = '  '
+    try:
+      if m.read == True:
+        marker = '  '
+      elif m.read == False:
+        marker = chr(config.unread) + ' '
+    except:
+      if 'UNREAD' in [l.label for l in self.labels]:
+        marker = chr(config.unread) + ' '
+      else:
+        marker = '  '
     if self.existsAttachments():
       attachment =chr(config.attachment) + ' '
     else:

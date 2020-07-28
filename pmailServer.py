@@ -161,7 +161,7 @@ def updateDb(account, session, service, lastHistoryId=None):
 
 
 def getMessages(s, account, query, position, height, excludedLabels=[],
-                includedLabels=[], count=False):
+                includedLabels=[], count=False, afterAction=None):
   '''
   Get a list of messages to display.
 
@@ -178,6 +178,101 @@ def getMessages(s, account, query, position, height, excludedLabels=[],
     Either a list of MessageInfo objects or
     an integer (depending on truthiness of count).
   '''
+  # excludeQuery = s.query(Labels.messageId).filter(
+  #     Labels.label.in_(excludedLabels))
+  # includeQuery = s.query(Labels.messageId).filter(
+  #     Labels.label.in_(includedLabels))
+  # q = s.query(MessageInfo)\
+  #     .filter(
+  #         MessageInfo.messageId.in_(query),
+  #         MessageInfo.emailAddress == account,
+  #         ~MessageInfo.messageId.in_(excludeQuery),
+  #         MessageInfo.messageId.in_(includeQuery))\
+  #     .order_by(MessageInfo.time.desc())
+  if afterAction == None:
+    q = Q.getQuery(s, account,query,includedLabels,excludedLabels)
+  elif afterAction['action'] == 'DELETE':
+    q = Q.removeMessages(afterAction['messageIds'])
+  elif afterAction['action'] in ['MARK_AS_READ','???']:
+    logger.info('removing msg from cache')
+    q = Q.getQuery(s, account,query,includedLabels,excludedLabels, read=True)
+    # q = Q.markAsRead(afterAction['messageIds'])
+  if count == False:
+    # return [h for h in q.slice(position, position + height - 2)]
+    return q[position:position + height -2]
+  elif count == True:
+    # return q.count()
+    return len(q)
+
+class SaveQuery():
+
+  def __init__(self):
+    self.account = None
+    self.query = None
+    self.includedLabels = None
+    self.excludedLabels = None
+    self.savedQuery = None
+
+  def getQuery(self,s,account,query,includedLabels,excludedLabels,read=False):
+    # Also deletes, new mails, mark as read, etc..
+    if (self.account == account and
+        str(self.query) == str(query) and
+        self.includedLabels == includedLabels and
+        self.excludedLabels == excludedLabels) and read == False:
+      logger.info('using saved query')
+      return self.savedQuery
+    else:
+      excludeQuery = s.query(Labels.messageId).filter(
+          Labels.label.in_(excludedLabels))
+      includeQuery = s.query(Labels.messageId).filter(
+          Labels.label.in_(includedLabels))
+      q = s.query(MessageInfo)\
+          .filter(
+              MessageInfo.messageId.in_(query),
+              MessageInfo.emailAddress == account,
+              ~MessageInfo.messageId.in_(excludeQuery),
+              MessageInfo.messageId.in_(includeQuery))\
+          .order_by(MessageInfo.time.desc())
+      self.account = account
+      self.query = query
+      self.includedLabels = includedLabels
+      self.excludedLabels = excludedLabels
+      self.savedQuery = list(q)
+      logger.info('generating new query')
+      return self.savedQuery
+
+  def removeMessages(self, messageIds):
+    self.savedQuery = [m for m in self.savedQuery if m.messageId not in
+                       messageIds]
+    return self.savedQuery
+
+  def markAsRead(self, messageIds):
+    newSavedQuery = []
+    for m in self.savedQuery:
+      if m.messageId in messageIds:
+        m.read = True
+        logger.info('setting read to True on msg: {}'.format(m.messageId))
+      newSavedQuery.append(m)
+    self.savedQuery = newSavedQuery
+    return self.savedQuery
+
+'''
+def getNextMessage(s, account, query, lastTime, excludedLabels=[],
+                includedLabels=[]):
+  Get a list of messages to display.
+
+  Args:
+    account: The currently selected account.
+    query: list of messageIds.
+    position: The position of the currently highlighted message.
+    height: The height of the stdscr.
+    excludedLabels: Any labels to exclude,
+    includedLabels: Any labels to include.
+    count: if True then only return the count.
+
+  Returns:
+    Either a list of MessageInfo objects or
+    an integer (depending on truthiness of count).
   excludeQuery = s.query(Labels.messageId).filter(
       Labels.label.in_(excludedLabels))
   includeQuery = s.query(Labels.messageId).filter(
@@ -188,11 +283,12 @@ def getMessages(s, account, query, position, height, excludedLabels=[],
           MessageInfo.emailAddress == account,
           ~MessageInfo.messageId.in_(excludeQuery),
           MessageInfo.messageId.in_(includeQuery))\
+      .filter(MessageInfo.time < lastTime)\
       .order_by(MessageInfo.time.desc())
-  if count == False:
-    return [h for h in q.slice(position, position+height-2)]
-  elif count == True:
-    return q.count()
+  return q.first() 
+
+'''
+
 # <---
 
 # ---> Main
@@ -204,8 +300,17 @@ def pmailServer(lock):
   port = config.port
   bufferSize = 1024
 
-  sock = socket.socket()
-  sock.bind((host, port))
+  portFree = True
+  while portFree == True:
+    try:
+      sock = socket.socket()
+      sock.bind((host, port))
+      portFree = False
+    except OSError as e:
+      print(e)
+      logger.info('checking port again in 30s')
+      sleep(30)
+
   s = Session()
 
   # configure how many client the server can listen simultaneously
@@ -230,6 +335,7 @@ def pmailServer(lock):
         # Get messages.
         incomingQ = unpickledIncoming['query']
         query = s.query(MessageInfo.messageId) if incomingQ is None else incomingQ
+        # logger.info('afterAction: {}'.format(unpickledIncoming['afterAction']))
         response = getMessages(s,
                                unpickledIncoming['account'],
                                query,
@@ -237,7 +343,8 @@ def pmailServer(lock):
                                unpickledIncoming['height'],
                                unpickledIncoming['excludedLabels'],
                                unpickledIncoming['includedLabels'],
-                               unpickledIncoming['count'])
+                               unpickledIncoming['count'],
+                               unpickledIncoming['afterAction'])
       elif action == 'ADD_MESSAGES':
         # Add messages.
         account = unpickledIncoming['account']
@@ -291,15 +398,9 @@ def pmailServer(lock):
 def syncDb(lock):
   s = Session()
   while 1:
-    # try:
-    #   with open(os.path.join(config.pickleDir, 'synced.pickle'), 'rb') as f:
-    #     shouldIupdate = pickle.load(f)
-    # except:
-    #   shouldIupdate = True
     try:
       with lock:
         logger.info('Aquiered lock, making session')
-        # if os.path.exists(config.dbPath):
         for account in config.listAccounts():
           shouldIupdate = s.query(UserInfo).get(account)
           if shouldIupdate and shouldIupdate.shouldIupdate == False:
@@ -317,8 +418,12 @@ def syncDb(lock):
                                    'synced.pickle'), 'wb') as f:
               pickle.dump(False, f)
       s.close()
+    except Exception as e:
+      logger.warning(e)
+      logger.info('unable to update DB, trying again soon')
     except KeyboardInterrupt as k:
       print("Bye!")
+      logger.info(k)
       sys.exit()
     sleep(config.updateFreq)
 
@@ -327,11 +432,13 @@ def syncDb(lock):
 if __name__ == '__main__':
 
   logger.setLevel(logging.DEBUG)
-  logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+  # Uncomment this for sql logs
+  # logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
   parser = argparse.ArgumentParser()
   parser.add_argument('-n', action='store')
   args = parser.parse_args()
+  Q = SaveQuery()
 
   if args.n == None:
     lock = Lock()

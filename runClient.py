@@ -6,9 +6,11 @@ import curses
 import email
 import errno
 import os
+import sys
 import pickle
 import re
 import socket
+import logging
 
 from apiclient import errors
 from common import (mkService, Labels, MessageInfo, Attachments,
@@ -504,6 +506,7 @@ def drawMessages(stdscr, getMessagesFunc, state):
     if 'thread' in state:
       t = state.pop('thread', None)
       t.start()
+      logger.info('starting thread')
       if 'event' in state:
         e = state.pop('event',None)
         e.wait()
@@ -520,7 +523,7 @@ def drawMessages(stdscr, getMessagesFunc, state):
   headers = getMessagesFunc(position, 45, excludedLabels, includedLabels,
                             False)
   selectedHeader = headers[cursor_y]
-  selectedHeaders = []
+  selectedHeadersIds = []
   numOfHeaders = getMessagesFunc(
       position, 45, excludedLabels, includedLabels, True)
 
@@ -539,10 +542,10 @@ def drawMessages(stdscr, getMessagesFunc, state):
 
     elif k == ord(' '):
       # Select mail
-      if selectedHeader not in selectedHeaders:
-        selectedHeaders.append(selectedHeader)
+      if selectedHeader.messageId not in selectedHeadersIds:
+        selectedHeadersIds.append(selectedHeader.messageId)
       else:
-        selectedHeaders.remove(selectedHeader)
+        selectedHeadersIds.remove(selectedHeader.messageId)
       k = curses.KEY_DOWN
       continue
 
@@ -550,8 +553,14 @@ def drawMessages(stdscr, getMessagesFunc, state):
       cursor_y = cursor_y + 1
       if cursor_y == height - 2:
         position = min(position + 1, numOfHeaders - height + 2)
-        # position = position + 1
         # Update list of messages.
+        # lastTime = headers[-1].time
+        # nextHeader = getNextMessage(account,None,lastTime,excludedLabels,includedLabels)
+        # logger.info(nextHeader)
+        # logger.info('there are {} headers'.format(len(headers)))
+        # headers.append(nextHeader)
+        # headers = headers[1:]
+        # logger.info('there are {} headers'.format(len(headers)))
         headers = getMessagesFunc(position, height, excludedLabels,
                                   includedLabels, False)
 
@@ -650,9 +659,8 @@ def drawMessages(stdscr, getMessagesFunc, state):
       # Delete message in varous ways.
       k = stdscr.getch()
       # s = Session()
-      if len(selectedHeaders) == 0:
-        selectedHeaders.append(selectedHeader)
-      selectedIds = [h.messageId for h in selectedHeaders]
+      if len(selectedHeadersIds) == 0:
+        selectedHeadersIds.append(selectedHeader.messageId)
       if k == ord('d'):
         # Delete message (add 'TRASH' label and
         # remove 'UNREAD' label if present).
@@ -661,16 +669,16 @@ def drawMessages(stdscr, getMessagesFunc, state):
                  'cursor_y': cursor_y,
                  'position': position,
                  'continue': True,
-                 'messageIds': selectedIds}
+                 'messageIds': selectedHeadersIds}
         # Add 'TRASH' and remove 'UNREAD' labels.
         logger.info('Modify local label DB: + "TRASH", - "UNREAD".')
         data = {'action': 'ADD_LABELS',
-                'labels': [(id, ['TRASH']) for id in selectedIds]}
+                'labels': [(id, ['TRASH']) for id in selectedHeadersIds]}
         sendToServer(data)
         data = {'action': 'REMOVE_LABELS',
-                'labels': [(id, ['UNREAD']) for id in selectedIds]}
+                'labels': [(id, ['UNREAD']) for id in selectedHeadersIds]}
         sendToServer(data)
-        # Labels.addLabels(s, [(id, ['TRASH']) for id in selectedIds])
+        # Labels.addLabels(s, [(id, ['TRASH']) for id in selectedHeadersIds])
 
       elif k == ord('r'):
         # Mark as read. Remove unread label but leave in INBOX.
@@ -679,13 +687,14 @@ def drawMessages(stdscr, getMessagesFunc, state):
                  'cursor_y': cursor_y,
                  'position': position,
                  'continue': True,
-                 'messageIds': selectedIds}
+                 'messageIds': selectedHeadersIds}
         # Remove 'UNREAD' labels.
         logger.info('Modify local label DB: - "UNREAD".')
         data = {'action': 'REMOVE_LABELS',
-                'labels': [(id, ['UNREAD']) for id in selectedIds]}
+                'labels': [(id, ['UNREAD']) for id in selectedHeadersIds]}
         sendToServer(data)
-        # Labels.removeLabels(s, [(id, ['UNREAD']) for id in selectedIds])
+        # Labels.removeLabels(s, [(id, ['UNREAD']) for id in
+        # selectedHeadersIds])
 
       elif k == ord('t'):
         # Add to TRASH but don't read.
@@ -694,18 +703,19 @@ def drawMessages(stdscr, getMessagesFunc, state):
                  'cursor_y': cursor_y,
                  'position': position,
                  'continue': True,
-                 'messageIds': selectedIds}
+                 'messageIds': selectedHeadersIds}
         # Remove 'UNREAD' labels.
         logger.info('Modify local label DB: + "TRASH".')
-        # Labels.addLabels(s, [(id, ['TRASH']) for id in selectedIds])
+        # Labels.addLabels(s, [(id, ['TRASH']) for id in selectedHeadersIds])
         data = {'action': 'ADD_LABELS',
-                'labels': [(id, ['TRASH']) for id in selectedIds]}
+                'labels': [(id, ['TRASH']) for id in selectedHeadersIds]}
         sendToServer(data)
 
-      # s.commit()
-      # Session.remove()
-      headers = getMessagesFunc(position, height, excludedLabels,
-                                includedLabels, False)
+      headers = getMessages(state['account'],position, height,
+                            excludedLabels=excludedLabels,
+                            includedLabels=includedLabels,
+                            afterAction={'action':state['action'],
+                                         'messageIds':selectedHeadersIds})
       numOfHeaders = getMessagesFunc(position, height, excludedLabels,
                                      includedLabels, True)
       return state
@@ -745,7 +755,10 @@ def drawMessages(stdscr, getMessagesFunc, state):
       if searchTerms:
         results = search(account, searchTerms)
         getMessagesFunc = (lambda a, b, c, d, e:
-                           getMessages(account, results, a, b, c, d, e))
+                           getMessages(account, a, b, excludedLabels=c,
+                                                      includedLabels=d,
+                                                      query=results,
+                                                      returnCount=e))
         position = 0
         headers = getMessagesFunc(position, height, excludedLabels,
                                   includedLabels, False)
@@ -759,7 +772,9 @@ def drawMessages(stdscr, getMessagesFunc, state):
       # Clear search terms.
       if searchTerms:
         getMessagesFunc = (lambda a, b, c, d, e:
-                           getMessages(account, None, a, b, c, d, e))
+                           getMessages(account, a, b, excludedLabels=c,
+                                                      includedLabels=d,
+                                                      returnCount=e))
         searchTerms = None
         position = 0
         headers = getMessagesFunc(position, height, excludedLabels,
@@ -789,7 +804,10 @@ def drawMessages(stdscr, getMessagesFunc, state):
       # Toggle between accounts.
       account = next(switcher)
       getMessagesFunc = (lambda a, b, c, d, e:
-                         getMessages(account, None, a, b, c, d, e))
+                         getMessages(account, a, b, excludedLabels=c,
+                                                    includedLabels=d,
+                                                    returnCount=e))
+      searchTerms = None
       position = 0
       headers = getMessagesFunc(position, height, excludedLabels,
                                 includedLabels, False)
@@ -819,7 +837,7 @@ def drawMessages(stdscr, getMessagesFunc, state):
         display = h.display(15, width)
         l1 = len(display)
         stdscr.attron(curses.color_pair(1))
-        if cursor_y == i and h in selectedHeaders:
+        if cursor_y == i and h.messageId in selectedHeadersIds:
           stdscr.attron(curses.color_pair(4))
           stdscr.attron(curses.A_BOLD)
           stdscr.addstr(i, 0, display)
@@ -835,7 +853,7 @@ def drawMessages(stdscr, getMessagesFunc, state):
             stdscr.addstr(i, l1, " " * (width - l1))
           stdscr.attroff(curses.A_BOLD)
           stdscr.attroff(curses.color_pair(3))
-        elif h in selectedHeaders:
+        elif h.messageId in selectedHeadersIds:
           stdscr.attron(curses.color_pair(2))
           stdscr.attron(curses.A_BOLD)
           stdscr.addstr(i, 0, display)
@@ -963,6 +981,7 @@ def postSend(service, event, sender, draftId, **kwargs):
       message = createMessage(sender, f.read(), **kwargs)
     # Send the message.
     message = sendMessage(service(sender), sender, message)
+    logger.info('sent message!')
     # Mark it as read if it wasn't already.
     if kwargs['type'] in ['REPLY', 'FORWARD']:
       header = kwargs['header']
@@ -974,8 +993,10 @@ def postSend(service, event, sender, draftId, **kwargs):
             'account': sender,
             'messageIds': [message['id']]}
     sendToServer(data)
+    logger.info('data sent to server')
+    event.set()
     # make this message more useful!
-    logger.info('Email sent successfully.')
+    # logger.info('Email sent successfully.')
   except Exception as e:
     # Something went wrong.
     logger.warning(e)
@@ -1389,7 +1410,9 @@ def sendToServer(data):
     return unpickledResponse
 
   except:
-    logger.info('Could not connect to pmailServer')
+    print('Could not connect to pmailServer, exiting.')
+    logger.warning('Could not connect to pmailServer')
+    sys.exit()
 
 
 def setEscDelay():
@@ -1400,8 +1423,12 @@ def setEscDelay():
   os.environ.setdefault('ESCDELAY', '25')
 
 
-def getMessages(account, query, position, height, excludedLabels,
-                includedLabels, count):
+def getMessages(account, position, height, **kwargs):
+  query = kwargs.get('query', None)
+  excludedLabels = kwargs.get('excludedLabels',[])
+  includedLabels = kwargs.get('includedLabels',[])
+  returnCount = kwargs.get('returnCount', False)
+  afterAction = kwargs.get('afterAction', None)
   data = {'action': 'GET_MESSAGES',
           'account': account,
           'query': query,
@@ -1409,9 +1436,9 @@ def getMessages(account, query, position, height, excludedLabels,
           'height': height,
           'excludedLabels': excludedLabels,
           'includedLabels': includedLabels,
-          'count': count}
+          'count': returnCount,
+          'afterAction': afterAction}
   return sendToServer(data)
-
 
 def mainLoop():
   '''
@@ -1430,7 +1457,9 @@ def mainLoop():
     state = curses.wrapper(
         lambda x: drawMessages(
             x, lambda a, b, c, d, e: getMessages(
-                state['account'], None, a, b, c, d, e
+                state['account'], a, b, excludedLabels=c,
+                                        includedLabels=d,
+                                        returnCount=e
             ), state=state))
     # Process state.
 
@@ -1469,7 +1498,9 @@ def mainLoop():
 if __name__ == '__main__':
   setEscDelay()
   switcher = cycle(config.listAccounts())
+  logger.setLevel(logging.DEBUG)
   mainLoop()
+  preFetchedMessages = None
 
   # Clean up tmp files.
   for f in os.listdir(config.tmpDir):
