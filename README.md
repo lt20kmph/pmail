@@ -13,12 +13,12 @@ these but in principle it should be possible to use other programs in their
 places.
 
 The motivation to develop Pmail comes from a growing frustration with getting
-[mutt][6] and the related msmpt/offlineimap configuration functional.
+[Mutt][6] and the related msmpt/offlineimap configuration functional.
 
 Pmail does not aim to implement all features available through the API, the
 current set of features is listed below.
 Of course Pmail is heavily inspired
-by [mutt][6] but aims to be a much simpler more usable client for Gmail users.
+by [Mutt][6] but aims to be a much simpler more usable client for Gmail users.
 
 ### Obligatory screenshot
 
@@ -90,7 +90,7 @@ You will also require the following python packages:
 - sqlalchemy
 - yaml
 
-These can be install with pip or however else you like to install python
+These can be installed with pip or however else you like to install python
 modules.
 
 ## Usage Instructions
@@ -102,8 +102,8 @@ The following key bindings are available.
 
     RETURN - Read the selected email
     r - Reply
-    f - forward an email
-    g - Reply to group/Reply to all
+    f - Forward an email
+    a - Reply to group/Reply to all
     m - Compose a new email
     v - View attachments
     dd - Move mail to trash and mark as read
@@ -116,9 +116,16 @@ The following key bindings are available.
     lt - Show messages in the trash
     / - Do a search
     c - Clear search filter
-    SPACE - select email (can be used to select multiple emails)
-    TAB - switch between accounts if you have more than one configured
-    q - quit
+    SPACE - Select email (can be used to select multiple emails)
+    TAB - Switch between accounts if you have more than one configured
+    gg - Go to top of message list
+    G - Go to bottom of message list
+    CTRL U - Scroll up one page
+    CTRL D - Scroll down one page
+    H - Move cursor to first visible messsage
+    M - Move cursor to central visible message
+    L - Move cursor to last visible message
+    q - Quit
 
 Before finally sending an email a confirmation screen will be shown. On this
 screen various options are available, but they are presented on the interface.

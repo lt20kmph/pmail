@@ -535,6 +535,7 @@ def drawMessages(stdscr, getMessagesFunc, state):
   while 1:
 
     height, width = stdscr.getmaxyx()
+    # logger.info('k is {}'.format(k))
 
     if k == curses.KEY_RESIZE:
       height, width = stdscr.getmaxyx()
@@ -553,14 +554,6 @@ def drawMessages(stdscr, getMessagesFunc, state):
       cursor_y = cursor_y + 1
       if cursor_y == height - 2:
         position = min(position + 1, numOfHeaders - height + 2)
-        # Update list of messages.
-        # lastTime = headers[-1].time
-        # nextHeader = getNextMessage(account,None,lastTime,excludedLabels,includedLabels)
-        # logger.info(nextHeader)
-        # logger.info('there are {} headers'.format(len(headers)))
-        # headers.append(nextHeader)
-        # headers = headers[1:]
-        # logger.info('there are {} headers'.format(len(headers)))
         headers = getMessagesFunc(position, height, excludedLabels,
                                   includedLabels, False)
 
@@ -571,20 +564,27 @@ def drawMessages(stdscr, getMessagesFunc, state):
         # Update list of messages.
         headers = getMessagesFunc(position, height, excludedLabels,
                                   includedLabels, False)
-        # position = position - 1
 
-    elif k == curses.KEY_NPAGE:
+    elif k in [curses.KEY_NPAGE, 4]:
       position = min(
           position + height - 7, max(numOfHeaders - height + 2, 0), numOfHeaders - 1)
-      # position = position + height - 7
       # Update list of messages.
       headers = getMessagesFunc(position, height, excludedLabels,
                                 includedLabels, False)
 
-    elif k == curses.KEY_PPAGE:
+    elif k in [curses.KEY_PPAGE, 21]:
       position = max(position - height + 7, 0)
       headers = getMessagesFunc(position, height, excludedLabels,
                                 includedLabels, False)
+
+    elif k == ord('M'):
+      cursor_y = (height - 2)//2
+
+    elif k == ord('H'):
+      cursor_y = 0
+
+    elif k == ord('L'):
+      cursor_y = height - 2
 
     elif k == ord('\n'):
       # Read a message.
@@ -630,6 +630,20 @@ def drawMessages(stdscr, getMessagesFunc, state):
         return state
 
     elif k == ord('g'):
+      k = stdscr.getch()
+      if k == ord('g'):
+        position = 0
+        cursor_y = 0
+        headers = getMessagesFunc(position, height, excludedLabels,
+                                  includedLabels, False)
+
+    elif k == ord('G'):
+      cursor_y = height - 2
+      position = numOfHeaders - height + 2
+      headers = getMessagesFunc(position, height, excludedLabels,
+                                  includedLabels, False)
+
+    elif k == ord('a'):
       # Reply to group/all.
       message = readMessage(mkService(account), selectedHeader.messageId)
       state = {'action': 'REPLYTOALL',
@@ -1459,7 +1473,8 @@ def mainLoop():
             x, lambda a, b, c, d, e: getMessages(
                 state['account'], a, b, excludedLabels=c,
                                         includedLabels=d,
-                                        returnCount=e
+                                        returnCount=e,
+                                        afterAction={'action':'MARK_AS_READ' }
             ), state=state))
     # Process state.
 
