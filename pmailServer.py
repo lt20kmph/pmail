@@ -193,8 +193,8 @@ def getMessages(s, account, query, position, height, excludedLabels=[],
     q = Q.getQuery(s, account,query,includedLabels,excludedLabels)
   elif afterAction['action'] == 'DELETE':
     q = Q.removeMessages(afterAction['messageIds'])
-  elif afterAction['action'] in ['MARK_AS_READ','???']:
-    logger.info('removing msg from cache')
+  elif afterAction['action'] in ['MARK_AS_READ','YES']:
+    # logger.info('removing msg from cache')
     q = Q.getQuery(s, account,query,includedLabels,excludedLabels, read=True)
     # q = Q.markAsRead(afterAction['messageIds'])
   if count == False:

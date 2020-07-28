@@ -72,11 +72,22 @@ important thing is to make sure you provide the details for at least one Gmail
 account and the location of the related credentials.json file from the API.
 When you finished save this file as 'config.yaml'.
 
-Finally run pmailServer.py, and a Google window will open up (or a link will
-appear in your terminal) asking you to confirm the relevant permissions.  If
-everything went successfully after a few minutes you should have synced a local
-copy of your mailbox and you can run the runClient.py and the client should
-start up and you should see a list of your messages.
+Finally run pmailServer.py, 
+
+    chmod +x pmailServer.py
+    ./pmailServer.py
+
+If everything is working, a Google window will open up (or a link will appear
+in your terminal) asking you to confirm the relevant permissions.  If
+everything went successfully after a few minutes (or longer, depending on how
+much history you are syncing, controled by the 'sync_from' option in the
+config file) you should have synced a local copy of your mailbox and then you
+can run the runClient.py, 
+
+    chmod +x runClient.py
+    ./runClient.py
+
+The client should start up and you should see a list of your messages.
 
 ### Dependencies
 
@@ -84,11 +95,11 @@ You will also need to install W3m, vim and fzf if you wish to use all the
 features of Pmail.
 You will also require the following python packages:
 
-- google-api-python-client 
-- google-auth-httplib2 
-- google-auth-oauthlib
-- sqlalchemy
-- yaml
+    google-api-python-client 
+    google-auth-httplib2 
+    google-auth-oauthlib
+    sqlalchemy
+    yaml
 
 These can be installed with pip or however else you like to install python
 modules.
@@ -134,16 +145,12 @@ attachment to your downloads directory in the configuration file.
 
 ## Notes
 
-If the local database gets too big scrolling can get sluggish.
-I might implement some kind of prefetching system to get around this in the
-future, but for now I have found it sufficient to only keep fairly recent emails
-synced in the local database.
 You can choose how much history you want to sync up by setting the
 associated value in the configuration file.
 
 When a search is executed a list of matching messages is retrieved directly from
 Google - not by querying the local database - and the corresponding message
-information is added to the local database.
+information is added to the local database. 
 This is probably not ideal - it means if you do a search with a large amount of
 matches it can be quite slow and it can cause your local database to grow quite
 allot.
@@ -178,11 +185,10 @@ attempt to run the client/server over any network you do not completely trust
 
 ## Limitations and TODO
 
-- If database gets too large then scrolling is sluggish.
 - The algorithm to detect attachments is unreliable.
 - Handle searches with large number of results differently.
 - Improve error handling and logging. 
-
+- Clean up and simplify code (It is quite muddled at the moment.)
 
 [1]: https://developers.google.com/gmail/api/quickstart/python
 [2]: http://w3m.sourceforge.net/

@@ -1474,7 +1474,7 @@ def mainLoop():
                 state['account'], a, b, excludedLabels=c,
                                         includedLabels=d,
                                         returnCount=e,
-                                        afterAction={'action':'MARK_AS_READ' }
+                                        afterAction={'action':'YES' }
             ), state=state))
     # Process state.
 
