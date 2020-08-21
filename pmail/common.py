@@ -185,7 +185,7 @@ def mkService(account):
     else:
       flow = InstalledAppFlow.from_client_secrets_file(
           credentialsPath, SCOPES)
-      creds = flow.run_local_server(port=0)
+      creds = flow.run_local_server(port=8686)
     # Save the credentials for the next run
     with open(tokenPath, 'wb') as token:
       pickle.dump(creds, token)
@@ -479,11 +479,8 @@ class Labels(Base):
     Returns: None.
     '''
     for (messageId, ls) in labels:
-      for l in ls:
-        logger.info(l)
       session.query(cls).filter(cls.messageId == messageId,cls.label.in_(ls))\
           .delete(synchronize_session=False)
-      logger.info('Commiting after removing labels.')
       session.commit()
 
 # ---> MessageInfo class
@@ -807,7 +804,6 @@ def myEmail(service):
 
 # Only needed to create table structure
 Base.metadata.create_all()
-
 
 """
 vim:foldmethod=marker foldmarker=--->,<---
