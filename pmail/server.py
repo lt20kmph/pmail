@@ -37,7 +37,7 @@ def storeLastHistoryId(account, session, lastMessageId=None, lastHistoryId=None)
   Returns:
     None
   '''
-  logger.info('Storing last historyId: {}'.format(lastHistoryId))
+  # logger.info('Storing last historyId: {}'.format(lastHistoryId))
   # path = os.path.join(config.pickleDir, 'lastHistoryId.' + account + '.pickle')
   if lastMessageId:
     lastHistoryId = session.query(MessageInfo).get(lastMessageId).historyId
@@ -122,7 +122,7 @@ def updateDb(account, session, service, newMessagesArrived, lastHistoryId=None):
     MessageInfo.addMessages(session, account,
                             service(account), [m['id'] for m in messageIds])
     lastMessageId = messageIds[0]['id']
-    logger.info('lastMessageId: {}'.format(lastMessageId))
+    # logger.info('lastMessageId: {}'.format(lastMessageId))
 
   else:
     changes = ListHistory(service(account), 'me',
@@ -157,7 +157,7 @@ def updateDb(account, session, service, newMessagesArrived, lastHistoryId=None):
     # try:
     if len(changes) > 0:
       lastHistoryId = str(max([int(change['id']) for change in changes]))
-      logger.info('Last history id: {}'.format(lastHistoryId))
+      # logger.info('Last history id: {}'.format(lastHistoryId))
     else:
     # except Exception as e:
       # logger.debug(e)
@@ -202,11 +202,12 @@ def getMessages(s, Q, newMessagesArrived, account, query, position,
   elif afterAction == None:
     q = Q.getQuery(s, account, query, includedLabels, excludedLabels)
   elif afterAction['action'] in ['DELETE', 'TRASH']:
-    logger.info('removing msg from cache')
+    logger.info('Removing message: {} from cache.'
+                .format(afterAction['messageIds']))
     q = Q.removeMessages(afterAction['messageIds'])
   elif afterAction['action'] in ['MARK_AS_READ']:
     # logger.info('removing msg from cache')
-    logger.info('getting a new query after reading..')
+    logger.info('Refreshing the cache, after reading.')
     # q = Q.markAsRead(afterAction['messageIds'])
     q = Q.getQuery(s, account, query, includedLabels,
                    excludedLabels, refresh=True)
@@ -234,14 +235,14 @@ class SaveQuery():
         str(self.query) == str(query) and
         self.includedLabels == includedLabels and
             self.excludedLabels == excludedLabels) and refresh == False:
-      logger.info('Using saved query.')
+      # logger.info('Using saved query.')
       return self.savedQuery
     else:
       excludeQuery = s.query(Labels.messageId).filter(
           Labels.label.in_(excludedLabels))
       includeQuery = s.query(Labels.messageId).filter(
           Labels.label.in_(includedLabels))
-      logger.info('Made two queries.')
+      # logger.info('Made two queries.')
       q = s.query(MessageInfo)\
           .filter(
               MessageInfo.messageId.in_(query),
@@ -249,7 +250,7 @@ class SaveQuery():
               ~MessageInfo.messageId.in_(excludeQuery),
               MessageInfo.messageId.in_(includeQuery))\
           .order_by(MessageInfo.time.desc())
-      logger.info('Successfully(?) refreshed the cache.')
+      # logger.info('Successfully(?) refreshed the cache.')
       self.account = account
       self.query = query
       self.includedLabels = includedLabels
@@ -393,7 +394,7 @@ def pmailServer(lock, newMessagesArrived, Q):
         response = [e for e in s.query(cls)
                     .filter(cls.messageId.in_(messageIds))]
       elif action == 'REMOVE_LABELS':
-        logger.info('Removing labels...')
+        # logger.info('Removing labels...')
         # Remove labels.
         # logger.info('Recieved instructions from client'
         #             + '{}'.format(unpickledIncoming))
@@ -407,7 +408,7 @@ def pmailServer(lock, newMessagesArrived, Q):
           # query = unpickledIncoming['query']
           includedLabels = unpickledIncoming['includedLabels']
           excludedLabels = unpickledIncoming['excludedLabels']
-          logger.info('Refreshing saved query.')
+          # logger.info('Refreshing saved query.')
           Q.getQuery(s, account, query, includedLabels,
                      excludedLabels, refresh=True)
         except Exception as e:

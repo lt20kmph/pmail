@@ -808,8 +808,8 @@ class Send(Action):
 
       if self.type in ['REPLY', 'REPLY_TO_ALL']:
         self.sendTo = mkTo(state.account, messageInfo, self.type)
-      elif self.type in ['FORWARD']:
-        logger.info('self.sendTo = {}'.format(self.sendTo))
+      # elif self.type in ['FORWARD']:
+        # logger.info('self.sendTo = {}'.format(self.sendTo))
 
       # First format the message.
       formatedMessage = run(config.w3mArgs(), input=message,
@@ -905,12 +905,12 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
   # Update the list of messages.
   messages = getMessages(state, returnCount=False)
-  if state.thread:
-    if state.thread.name == "postRead":
-      logger.info('Getting new message list.')
+  # if state.thread:
+  #   if state.thread.name == "postRead":
+  #     logger.info('Getting new message list.')
   numOfMessages = getMessages(state, returnCount=True)
   selectedMessage = messages[state.cursor_y]
-  logger.info('Labels: {}'.format([l.label for l in messages[0].labels]))
+  # logger.info('Labels: {}'.format([l.label for l in messages[0].labels]))
 
   # Loop where k is the last character pressed
   k = 0
@@ -1283,7 +1283,7 @@ def postSend(service, event, account, draftId, **kwargs):
       message = createMessage(account, f.read(), **kwargs)
     # Send the message.
     message = sendMessage(service(account), account, message)
-    logger.info('sent message!')
+    logger.info('Sent a message.')
     # Mark it as read if it wasn't already.
     # if kwargs['type'] in ['REPLY', 'FORWARD']:
     # messageInfo = kwargs['messageInfo']
@@ -1296,7 +1296,7 @@ def postSend(service, event, account, draftId, **kwargs):
             'messageIds': [message['id']]}
     lock = kwargs.get('globalLock',None)
     sendToServer(data,lock)
-    logger.info('data sent to server')
+    # logger.info('data sent to server')
     event.set()
     # make this message more useful!
     # logger.info('Email sent successfully.')
@@ -1321,7 +1321,7 @@ def postRead(service, state):
   '''
   # Mark message as read.
   # Remove 'UNREAD' label from local storage.
-  logger.info('Removing label from local storage.')
+  # logger.info('Removing label from local storage.')
   account = state.account
   messageId = state.selectedMessages[0].messageId
   lock = state.globalLock
@@ -1339,7 +1339,7 @@ def postRead(service, state):
   state.event.set()
   state.selectedMessages = []
   # Remove unread label from Google servers.
-  logger.info('Removing label from Google servers.')
+  # logger.info('Removing label from Google servers.')
   body = {'removeLabelIds': ['UNREAD'], 'addLabelIds': []}
   try:
     service(account).users().messages().modify(userId='me', id=messageId,

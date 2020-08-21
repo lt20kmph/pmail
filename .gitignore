@@ -6,6 +6,9 @@ credentials.*
 *.log
 test*
 tmp/
+dist/
+build/
+pmail.egg*
 quickstart.py
 checkMail.py
 setup.py

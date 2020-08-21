@@ -55,6 +55,21 @@ At the moment Pmail is still in development and still has a few issues but it
 needs testing. If you would like to test it out you should follow the following
 instructions.
 
+### Dependencies
+
+You will also need to install W3m, vim and fzf if you wish to use all the
+features of Pmail.
+You will also require the following python packages:
+
+    google-api-python-client 
+    google-auth-httplib2 
+    google-auth-oauthlib
+    sqlalchemy
+
+These can be installed with pip or however else you like to install python
+modules.
+
+
 ### Setup Gmail API
 
 (Instructions valid as of July 2020.
@@ -66,43 +81,61 @@ the type of application and finally click the 'Download client configuration
 button at the end.
 3. Save the 'credentials.json' file somewhere safe.
 
-After setting up the API, clone this repository and edit the example
-configuration with your details. You can leave every thing as it is, the
-important thing is to make sure you provide the details for at least one Gmail
-account and the location of the related credentials.json file from the API.
-When you finished save this file as 'config.yaml'.
+### Install Pmail
 
-Finally run pmailServer.py, 
+####Method 1: Using pip (recommended)
 
-    chmod +x pmailServer.py
-    ./pmailServer.py
+Run the following command:
+
+    pip install pmail
+
+####Method 2: Clone this repo
+
+Make sure you have all of the dependencies installed and then:
+
+    git clone https://github.com/lt20kmph/pmail
+
+####Method 3: From the AUR
+
+Not supported yet
+
+### Configure
+
+Pmail looks for config files in the following locations in order of
+preference:
+
+    $HOME/.config/pmail/config.yaml
+    ../config.yaml
+
+To copy the included example config file to `$HOME/.config/pmail/config.yaml`
+run the following:
+
+    python -m pmail --mk-config
+
+You can safely ignore most of the configuration options but you will need to
+fill out your relevant details in the accounts section.
+
+Also you might need to change `nvim` to `vim` under `editor` depending on your
+preference.
+
+### First run
+
+First we need to start the server. Run Pmail in server mode: 
+
+    python -m pmail -m server
 
 If everything is working, a Google window will open up (or a link will appear
-in your terminal) asking you to confirm the relevant permissions.  If
+in your terminal) asking you to confirm the relevant permissions. At this
+point you may have to find the advanced options to 'allow unsafe apps'. If
 everything went successfully after a few minutes (or longer, depending on how
-much history you are syncing, controled by the 'sync_from' option in the
+much history you are syncing, controlled by the 'sync_from' option in the
 config file) you should have synced a local copy of your mailbox and then you
-can run the runClient.py, 
+can start Pmail in client mode: 
 
-    chmod +x runClient.py
-    ./runClient.py
+    python -m pmail -m client
 
-The client should start up and you should see a list of your messages.
-
-### Dependencies
-
-You will also need to install W3m, vim and fzf if you wish to use all the
-features of Pmail.
-You will also require the following python packages:
-
-    google-api-python-client 
-    google-auth-httplib2 
-    google-auth-oauthlib
-    sqlalchemy
-    yaml
-
-These can be installed with pip or however else you like to install python
-modules.
+The client should start up and you should see a list of your messages, and you
+can start deleting/sending/forwarding emails.
 
 ## Usage Instructions
 
@@ -160,22 +193,30 @@ information stored locally you can just do a search for 'newer_than:4y', where
 The search is compatible with any keyword search exactly the same as the usual
 Gmail searching capabilities and hence its quite powerful.
 
-pmailServer accepts an argument via a flag '-n'. The argument should be the
-email address for one of your configured accounts. When run like this
-pmailServer will return the number of currently unread messages in your inbox.
+pmail can also be run with a flag '-n' and an account id.  When run like this
+pmail will return an int corresponding to the number of unread mails in the
+mail box of the account corresponding to the id provided.
 
-For example:
+For example, if you had the following in your `config.yaml`:
 
-    ./pmailServer.py -n youremail@gmail.com
+    accounts:
+        yourname@gmail.com:
+            id: 'ID'
+            name: 'Wonderful Person'
+            credentials: 'credentials.json'
 
-Would return the number of currently unread mail in youremails inbox, this is
-potentially useful in scripts.
+then running:
+
+    python -m pmail -n ID 
+
+would return the number of unread mails in the mailbox for
+`yourname@gmail.com`. This is potentially useful for scripts.
 
 ## Security considerations
 
 YOU ARE RESPONSIBLE FOR YOU OWN SECURITY. Keep your credentials.json file
 somewhere safe, possibly encrypted.
-After the first the pmailServer also stores a token.pickle file this file
+After the first run, Pmail stores a token.pickle file this file
 confirms that you have agreed to give permission to Pmail to send and modify
 emails. 
 Also keep this file safe.

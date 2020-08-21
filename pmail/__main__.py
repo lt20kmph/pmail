@@ -1,7 +1,8 @@
 import argparse
 import textwrap
-import os
-from pmail.common import config
+import os, sys
+from pmail.common import config, WORKING_DIR
+from shutil import copyfile
 import pmail.client
 import pmail.server
 
@@ -16,12 +17,20 @@ if pmail is run with BOTH of -m and -n flags then it will exit with a warning
   parser.add_argument('-v', '--version', action='version',
                     version='%(prog)s ' + pmail.__version__)
 
-  parser.add_argument('-c',
-                      # '--config',
-                      metavar='PATH',
-                      help='PATH=path/to/config.yaml',
-                      # default='config.yaml',
-                      action='store')
+  configDir = os.path.join(os.environ['HOME'],'.config','pmail')
+  configPath = os.path.join(configDir, 'config.yaml')
+
+  parser.add_argument('--mk-config',
+                      help='Install an example file to: {}'
+                      .format(configPath),
+                      action='store_true')
+  
+  # parser.add_argument('-c',
+  #                     # '--config',
+  #                     metavar='PATH',
+  #                     help='PATH=path/to/config.yaml',
+  #                     # default='config.yaml',
+  #                     action='store')
 
   parser.add_argument('-n',
                       metavar='ACCOUNT_ID',
@@ -37,11 +46,20 @@ if pmail is run with BOTH of -m and -n flags then it will exit with a warning
                       action='store')
 
   args = parser.parse_args()
-  if args.c:
-    pass
-  else:
-    if not os.path.exists(os.path.join(os.environ['HOME'],'.config/pmail')):
-      os.makedirs(os.path.join(os.environ['HOME'],'.config/pmail'))
+
+  if args.mk_config:
+    if not os.path.exists(configPath):
+      if not os.path.exists(configDir):
+        os.makedirs(configDir)
+      configSrc = os.path.join(WORKING_DIR,'config.yaml')
+      copyfile(configSrc, configPath)
+      print('Config successfully installed at: {}.'
+            .format(configPath))
+    else:
+      print('Config file already exists at: {}.'
+            .format(configPath))
+    sys.exit()
+
   if args.n == None and args.m == None:
     parser.print_help()
   elif args.n and args.m:

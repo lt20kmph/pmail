@@ -63,10 +63,10 @@ accounts:
   youraccount@gmail.com:
 
     # shortname to identify your account.
-    id: 'OG'
+    id: 'ID'
 
     # Your name as it should appear in the headers of emails.
-    name: 'Oliver Sargent'
+    name: 'Wonderful Person'
 
     # Path to your credentials.json file 
     credentials: '/path/to/your/credentials.json'
