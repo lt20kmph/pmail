@@ -7,7 +7,7 @@ import mimetypes
 import os
 
 from apiclient import errors
-from common import logger, config
+from pmail.common import logger, config
 from email.mime.audio import MIMEAudio
 from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
@@ -68,7 +68,7 @@ def createMessage(sender, messageText, **kwargs):
   cc = kwargs.get('cc', None)
   bcc = kwargs.get('bcc', None)
   subject = kwargs.get('subject', None)
-  header = kwargs.get('header', None)
+  header = kwargs.get('messageInfo', None)
 
   if attachments:
     message = MIMEMultipart()
@@ -131,12 +131,12 @@ def mkSubject(header, type):
   Args:
     header: The MessageInfo object of the message being replied 
     or forewarded.
-    type: One of REPLY, REPLYTOALL, FORWARD.
+    type: One of REPLY, REPLY_TO_ALL, FORWARD.
 
   Returns:
     A string with the subject.
   '''
-  if type in ['REPLY', 'REPLYTOALL']:
+  if type in ['REPLY', 'REPLY_TO_ALL']:
     if (header.subject)[:3] not in ['re:', 'Re:']:
       subject = 'Re: ' + header.subject
     else:
@@ -153,11 +153,11 @@ def mkTo(sender, header, type):
   Args:
     sender: Whoever is sending mail.
     header: The MessageInfo object of the mail being replied to.
-    type: One of REPLY or REPLYTOALL.
+    type: One of REPLY or REPLY_TO_ALL.
   '''
   if type == 'REPLY':
     to = header.sender
-  elif type == 'REPLYTOALL':
+  elif type == 'REPLY_TO_ALL':
     all = filter(lambda x: not re.search(sender, x),
                  (header.recipients).split(','))
     to = header.sender

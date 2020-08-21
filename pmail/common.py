@@ -26,21 +26,63 @@ from google.auth.transport.requests import Request
 WORKING_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class Config():
-  def __init__(self,config='config.yaml'):
-    configpath = os.path.join(WORKING_DIR,config)
-    with open(configpath, 'r', encoding='utf-8') as f:
+  # def __init__(self,config_path=os.path.join(WORKING_DIR,'config.yaml')):
+  def __init__(self,**kwargs):
+    try:
+      home = os.environ['HOME']
+    except KeyError as e:
+      logger.debug(e)
+      logger.warning('HOME not set.')
+      sys.exit()
+    pmailDir = '.local/share/pmail'
+    configDir = '.config/pmail'
+    if 'config_path' not in kwargs:
+      config_path_0 = os.path.join(home,configDir,'config.yaml')
+      config_path_1 = os.path.join(WORKING_DIR,'config.yaml')
+      if os.path.exists(config_path_0):
+        config_path = config_path_0
+      elif os.path.exists(config_path_1):
+        config_path = config_path_1
+      else:
+        msg = "Could not find config file 'config.yaml'." +\
+              "Pmail looked in {} and {}."\
+              .format(config_path_0,config_path_1)
+        logger.warning(msg)
+        print(msg)
+        sys.exit()
+    else:
+      config_path = kwargs.get('config_path')
+    
+    with open(config_path, 'r', encoding='utf-8') as f:
       y = yaml.load(f, Loader=Loader)
     b = y['behaviour']
     self.syncFrom = b['sync_from']
     self.editor = b['editor']
     self.pager = b['pager']
     self.picker = b['picker']
-    self.tmpDir = b['tmp_directory']
-    self.pickleDir = b['pickle_directory']
-    self.dlDir = b['download_directory']
-    self.dbPath = b['db_path']
+    # self.tmpDir = b['tmp_directory']
+    tmpPath = os.path.join(home,pmailDir,'tmp')
+    if not os.path.exists(tmpPath):
+      os.makedirs(tmpPath)
+    self.tmpDir = b.get('tmp_directory',tmpPath)
+    # self.pickleDir = b['pickle_directory']
+    picklePath = os.path.join(home,pmailDir,'pickles')
+    if not os.path.exists(picklePath):
+      os.makedirs(picklePath)
+    self.pickleDir = b.get('pickle_directory', picklePath) 
+    # self.dlDir = b['download_directory']
+    dlPath = os.path.join(home,'Downloads')
+    if not os.path.exists(dlPath):
+      os.makedirs(dlPath)
+    self.dlDir = b.get('download_directory',dlPath)
+    # self.dbPath = b['db_path']
+    self.dbPath = b.get('db_path',
+                        os.path.join(home,pmailDir,'pmail.db'))
+    # print(self.dbPath)
+    # self.logPath = b['log_path']
+    self.logPath = b.get('log_path',
+                         os.path.join(home,pmailDir,'pmail.log'))
     self.logLevel = b['log_level']
-    self.logPath = b['log_path']
     self.updateFreq = b['update_frequency']
     self.port = b['port_number']
     
@@ -63,8 +105,14 @@ class Config():
 
     self.dbExists = False
 
+    global config
+    config = self
+
   def listAccounts(self):
     return self.accounts.keys()
+  
+  def listAccountIds(self):
+    return [self.accounts[k]['id'] for k in self.listAccounts()]
 
   def getName(self, myemail):
     return self.accounts[myemail]['name']
@@ -93,14 +141,15 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.settings.basic']
 
 
-DB_PATH = 'sqlite:///' + WORKING_DIR + '/' + config.dbPath
+DB_PATH = 'sqlite:///' + os.path.join(WORKING_DIR ,config.dbPath)
 
 HEADERS = ['From', 'Subject', 'To', 'Reply-To', 'In-Reply-To',
            'References', 'Message-ID', 'Content-Type']
 
 logging.basicConfig(filename=os.path.join(WORKING_DIR, config.logPath),
                     level=logging.CRITICAL,
-                    format='%(asctime)s :: %(levelname)s - %(message)s')
+                    format='%(levelname)s::%(asctime)s::[%(module)s]: %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S')
 
 logger = logging.getLogger(__name__)
 
@@ -345,6 +394,12 @@ class UserInfo(Base):
     return count
 
   @classmethod
+  def succesfulUpdate(cls, session, account):
+    q = session.query(cls).get(account)
+    q.shouldIupdate = False
+    session.commit()
+
+  @classmethod
   def update(cls, session, account, service, lastHistoryId):
     '''
     Method to update UserInfo.
@@ -424,8 +479,11 @@ class Labels(Base):
     Returns: None.
     '''
     for (messageId, ls) in labels:
+      for l in ls:
+        logger.info(l)
       session.query(cls).filter(cls.messageId == messageId,cls.label.in_(ls))\
-          .delete(synchronize_session='fetch')
+          .delete(synchronize_session=False)
+      logger.info('Commiting after removing labels.')
       session.commit()
 
 # ---> MessageInfo class
@@ -475,6 +533,15 @@ class MessageInfo(Base):
     self.recipients = recipients
     self.contentType = contentType
 
+  def __eq__(self, other):
+      if isinstance(other, self.__class__):
+          return self.messageId == other.messageId
+      else:
+          return False
+
+  def __ne__(self, other):
+      return not self.__eq__(other)
+
   def display(self, senderWidth, scrWidth):
     '''
     For displaying information about a message in the main screen
@@ -486,16 +553,10 @@ class MessageInfo(Base):
     Reurns:
       A formatted string.
     '''
-    try:
-      if m.read == True:
-        marker = '  '
-      elif m.read == False:
-        marker = chr(config.unread) + ' '
-    except:
-      if 'UNREAD' in [l.label for l in self.labels]:
-        marker = chr(config.unread) + ' '
-      else:
-        marker = '  '
+    if 'UNREAD' in [l.label for l in self.labels]:
+      marker = chr(config.unread) + ' '
+    else:
+      marker = '  '
     if self.existsAttachments():
       attachment =chr(config.attachment) + ' '
     else:
@@ -650,7 +711,7 @@ class MessageInfo(Base):
         
     q = list(filter(doesMessageAlreadyExist, messageIds))
     i, l, batch = 0, len(q), service.new_batch_http_request()
-    logger.debug('Making batch request..')
+    # logger.debug('Making batch request..')
 
     while i < l:
       for messageId in q[i:i+100]:

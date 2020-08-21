@@ -4,7 +4,6 @@
 credentials.*
 *.json
 *.log
-config.yaml
 test*
 tmp/
 quickstart.py
@@ -12,4 +11,5 @@ checkMail.py
 setup.py
 .vim/
 downloads/
+trash/
 __pycache__

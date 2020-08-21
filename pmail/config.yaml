@@ -1,0 +1,72 @@
+# Global Settings
+
+## Behaviour
+behaviour:
+  sync_from: '3m'
+  editor: 'nvim -c set spell -c startinsert -c'
+  pager: 'w3m -T text/html -s -o display_image=False -o confirm_qq=False -o auto_image=False'
+  picker: 'fzf --color=16,gutter:-1,bg+:6 --print-query --no-clear'
+
+  # A directory to store tempory files. 
+  # Default: $HOME/.local/share/pmail/tmp
+  # tmp_directory:
+
+  # A directory to store pickles.
+  # Default: $HOME/.local/share/pmail/pickles
+  # pickle_directory: 
+
+  # Where to save downloads.
+  # Default: $HOME/Downloads
+  # download_directory: 
+
+  # Where to store the database.
+  # Default: $HOME/.local/share/pmail/pmail.db
+  # db_path: 
+
+  # Where to store the log.
+  # Default: $HOME/.local/share/pmail/pmail.log
+  # log_path: 
+  log_level: none
+
+  # Number of seconds between updates.
+  update_frequency: 300
+
+  # Port used for communication between the server and client.
+  port_number: 5656
+
+## Appearance
+appearance:
+  markers:
+    # These are the integers returned by pythons 'ord' 
+    # function applied to the unicode strings, e.g. '\uf02b'.
+    # For some reason if the strings are imported from here they do 
+    # not get interpreted as unicode strings.
+    unread: 61664
+    attachment: 61483 
+    user: 61447
+    seperator: 61524
+
+  colors:
+    # You can use numbers the standard 256 terminal colors.
+    # -1 is no color, so it will be your terminals background color.
+    bg: -1
+    fg: 4
+    highlighted_bg: 8
+    highlighted_fg: 5
+    selected_bg: -1
+    selected_fg: 2
+    statusline_bg: 7 
+    statusline_fg: 0
+
+# Accounts
+accounts:
+  youraccount@gmail.com:
+
+    # shortname to identify your account.
+    id: 'OG'
+
+    # Your name as it should appear in the headers of emails.
+    name: 'Oliver Sargent'
+
+    # Path to your credentials.json file 
+    credentials: '/path/to/your/credentials.json'
