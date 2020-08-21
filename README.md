@@ -87,7 +87,7 @@ button at the end.
 
 Run the following command:
 
-    pip install pmail
+    pip install pmail-tui
 
 ####Method 2: Clone this repo
 
