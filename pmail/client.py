@@ -23,6 +23,7 @@ from threading import Thread, Event, Lock
 from uuid import uuid4
 from time import sleep, process_time
 from queue import Queue
+from shutil import which
 # <---
 
 # ---> Curses functions
@@ -1788,25 +1789,65 @@ def checkForNewMessages(lock, eventQue):
       eventQue.put({'event': 'NewMsg'})
     sleep(10)
 
-# if __name__ == '__main__':
+def checkPrograms():
+  progs = {}
+  progs['editor'] = config.editor.split()[0]
+  progs['pager'] = config.pager.split()[0]
+  progs['picker'] = config.picker.split()[0]
+
+  msgs = {}
+  msgs['editor'] = 'You will not be able to write emails.'
+  msgs['pager'] = 'You will not be able to read emails.'
+  msgs['picker'] = 'You will not be able to use the address book' +\
+                   ' or the file chooser.'
+
+  def askToContinue(prog, msg):
+
+    def _askToContinue(stdscr):
+      height, width = stdscr.getmaxyx()
+      if height < 4: 
+        logger.warning('Terminal too small to continue!')
+        sys.exit()
+      else:
+        lines = []
+        lines.append(f'You do not seem to have {progs[prog]} installed and ' +
+                      'available in your $PATH.')
+        lines.append(msg)
+        lines.append(f'You can try modifying the {prog} setting in ' + 
+                     f'config.yaml, or installing {progs[prog]}.')
+        lines.append("Press 'y' to ignore this message and continue, and " +
+                     "'q' to exit.")
+        for i,l in enumerate(lines):
+          stdscr.addstr(i,0,l[:width - 1]) 
+        k = 0
+        while 1:
+          if k == ord('y'):
+            return 'y'
+          elif k == ord('q'):
+            return 'q'
+          k = stdscr.getch()
+
+    r = curses.wrapper(_askToContinue)
+    if r == 'q':
+      sys.exit()
+
+  for k in progs:
+    if not which(progs[k]):
+      askToContinue(k,msgs[k])
+
 def start():
+  checkPrograms()
   setEscDelay()
   accountSwitcher = cycle(config.listAccounts())
-  logger.setLevel(logging.DEBUG)
-  # TODO: Not using newMessagesArrived event any more!
-  # newMessagesArrived = Event()
+  logger.setLevel(config.logLevel)
   lock = Lock()
   eventQue = Queue()
   t1 = Thread(target=mainLoop,args=(lock,accountSwitcher,eventQue,))
   t2 = Thread(target=checkForNewMessages,args=(lock,eventQue,),
               daemon=True)
-  # msgListener = Thread(target=waitForNewMessages,
-  #        args=(eventQue,newMessagesArrived))
   t1.start()
   t2.start()
-  # msgListener.start()
-  # mainLoop()
-
+  
   # Clean up tmp files.
   for f in os.listdir(config.tmpDir):
     os.remove(os.path.join(config.tmpDir, f))

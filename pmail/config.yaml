@@ -26,7 +26,10 @@ behaviour:
   # Where to store the log.
   # Default: $HOME/.local/share/pmail/pmail.log
   # log_path: 
-  log_level: none
+
+  # What kind of messages to store in the log.
+  # Can be one of: INFO, WARNING.
+  log_level: WARNING
 
   # Number of seconds between updates.
   update_frequency: 300

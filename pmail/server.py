@@ -487,7 +487,7 @@ def syncDb(lock, newMessagesArrived):
 
 # if __name__ == '__main__':
 def start():
-  logger.setLevel(logging.DEBUG)
+  logger.setLevel(config.logLevel)
   # Uncomment this for sql logs
   # logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 

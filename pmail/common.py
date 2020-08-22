@@ -26,13 +26,11 @@ from google.auth.transport.requests import Request
 WORKING_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class Config():
-  # def __init__(self,config_path=os.path.join(WORKING_DIR,'config.yaml')):
   def __init__(self,**kwargs):
     try:
       home = os.environ['HOME']
     except KeyError as e:
-      logger.debug(e)
-      logger.warning('HOME not set.')
+      print(e)
       sys.exit()
     pmailDir = '.local/share/pmail'
     configDir = '.config/pmail'
@@ -45,9 +43,8 @@ class Config():
         config_path = config_path_1
       else:
         msg = "Could not find config file 'config.yaml'." +\
-              "Pmail looked in {} and {}."\
+              "Pmail looked in {} and {}.\r\n"\
               .format(config_path_0,config_path_1)
-        logger.warning(msg)
         print(msg)
         sys.exit()
     else:
@@ -60,29 +57,30 @@ class Config():
     self.editor = b['editor']
     self.pager = b['pager']
     self.picker = b['picker']
-    # self.tmpDir = b['tmp_directory']
     tmpPath = os.path.join(home,pmailDir,'tmp')
     if not os.path.exists(tmpPath):
       os.makedirs(tmpPath)
     self.tmpDir = b.get('tmp_directory',tmpPath)
-    # self.pickleDir = b['pickle_directory']
     picklePath = os.path.join(home,pmailDir,'pickles')
     if not os.path.exists(picklePath):
       os.makedirs(picklePath)
     self.pickleDir = b.get('pickle_directory', picklePath) 
-    # self.dlDir = b['download_directory']
     dlPath = os.path.join(home,'Downloads')
     if not os.path.exists(dlPath):
       os.makedirs(dlPath)
     self.dlDir = b.get('download_directory',dlPath)
-    # self.dbPath = b['db_path']
     self.dbPath = b.get('db_path',
                         os.path.join(home,pmailDir,'pmail.db'))
-    # print(self.dbPath)
-    # self.logPath = b['log_path']
     self.logPath = b.get('log_path',
                          os.path.join(home,pmailDir,'pmail.log'))
-    self.logLevel = b['log_level']
+
+    logLevels = {'WARNING':logging.WARNING,'INFO':logging.INFO}
+    if b['log_level'] in logLevels.keys():
+      self.logLevel = logLevels[b['log_level']]
+    else:
+      print('WARNING: log_level incorrectly configured, ' + 
+            '{} is not a valid level.\r\n'.format(b['log_level']))
+      sys.exit()
     self.updateFreq = b['update_frequency']
     self.port = b['port_number']
     
@@ -140,18 +138,19 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.modify',
           'https://www.googleapis.com/auth/gmail.settings.basic']
 
+logging.basicConfig(filename=config.logPath,
+                    level=config.logLevel,
+                    format='%(levelname)s::%(asctime)s::[%(module)s]: %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S')
+
+logger = logging.getLogger(__name__)
+
+
 
 DB_PATH = 'sqlite:///' + os.path.join(WORKING_DIR ,config.dbPath)
 
 HEADERS = ['From', 'Subject', 'To', 'Reply-To', 'In-Reply-To',
            'References', 'Message-ID', 'Content-Type']
-
-logging.basicConfig(filename=os.path.join(WORKING_DIR, config.logPath),
-                    level=logging.CRITICAL,
-                    format='%(levelname)s::%(asctime)s::[%(module)s]: %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S')
-
-logger = logging.getLogger(__name__)
 
 engine = create_engine(DB_PATH)
 Base = declarative_base(bind=engine)

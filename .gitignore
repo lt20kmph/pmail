@@ -9,6 +9,7 @@ tmp/
 dist/
 build/
 pmail.egg*
+pmail_tui.egg*
 quickstart.py
 checkMail.py
 setup.py

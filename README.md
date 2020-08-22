@@ -1,5 +1,7 @@
 # Pmail
 
+Simple TUI mail client for Gmail.
+
 ## Introduction
 
 Pmail aims to be a usable, terminal based client for Googles Gmail service
@@ -83,19 +85,19 @@ button at the end.
 
 ### Install Pmail
 
-####Method 1: Using pip (recommended)
+#### Method 1: Using pip (recommended)
 
 Run the following command:
 
     pip install pmail-tui
 
-####Method 2: Clone this repo
+#### Method 2: Clone this repo
 
 Make sure you have all of the dependencies installed and then:
 
     git clone https://github.com/lt20kmph/pmail
 
-####Method 3: From the AUR
+#### Method 3: From the AUR
 
 Not supported yet
 
@@ -118,7 +120,7 @@ fill out your relevant details in the accounts section.
 Also you might need to change `nvim` to `vim` under `editor` depending on your
 preference.
 
-### First run
+### Getting Started
 
 First we need to start the server. Run Pmail in server mode: 
 
@@ -130,7 +132,7 @@ point you may have to find the advanced options to 'allow unsafe apps'. If
 everything went successfully after a few minutes (or longer, depending on how
 much history you are syncing, controlled by the 'sync_from' option in the
 config file) you should have synced a local copy of your mailbox and then you
-can start Pmail in client mode: 
+can start Pmail in client mode, in a separate terminal window: 
 
     python -m pmail -m client
 
@@ -173,7 +175,7 @@ The following key bindings are available.
 
 Before finally sending an email a confirmation screen will be shown. On this
 screen various options are available, but they are presented on the interface.
-On the attachments screen, you can either press q to quit or s to save the
+On the attachments screen, you can either press 'q' to quit or 's' to save the
 attachment to your downloads directory in the configuration file.
 
 ## Notes
@@ -226,10 +228,10 @@ attempt to run the client/server over any network you do not completely trust
 
 ## Limitations and TODO
 
-- The algorithm to detect attachments is unreliable.
-- Handle searches with large number of results differently.
-- Improve error handling and logging. 
-- Clean up and simplify code (It is quite muddled at the moment.)
+- [ ] There are some strange bugs which need to be investigated.
+- [ ] The algorithm to detect attachments is unreliable.
+- [ ] Handle searches with large number of results differently.
+- [ ] Improve error handling and logging. 
 
 [1]: https://developers.google.com/gmail/api/quickstart/python
 [2]: http://w3m.sourceforge.net/
