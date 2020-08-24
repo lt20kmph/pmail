@@ -96,8 +96,8 @@ def ListHistory(service, user_id, start_history_id='1'):
       changes.extend(history['history'])
 
     return changes
-  except errors.Error as e:
-    logger.debug(e)
+  except Exception:
+    logger.exception('An error occured while trying to list history.')
 
 # <---
 
@@ -159,7 +159,7 @@ def updateDb(account, session, service, newMessagesArrived, lastHistoryId=None):
       lastHistoryId = str(max([int(change['id']) for change in changes]))
       # logger.info('Last history id: {}'.format(lastHistoryId))
     else:
-    # except Exception as e:
+    # except Exception:
       # logger.debug(e)
       lastHistoryId = None
     lastMessageId = None
@@ -235,7 +235,7 @@ class SaveQuery():
         str(self.query) == str(query) and
         self.includedLabels == includedLabels and
             self.excludedLabels == excludedLabels) and refresh == False:
-      # logger.info('Using saved query.')
+      logger.info('Using saved query.')
       return self.savedQuery
     else:
       excludeQuery = s.query(Labels.messageId).filter(
@@ -256,7 +256,7 @@ class SaveQuery():
       self.includedLabels = includedLabels
       self.excludedLabels = excludedLabels
       self.savedQuery = list(q)
-      # logger.info('Generating new query.')
+      logger.info('Generating new query.')
       return self.savedQuery
 
   def removeMessages(self, messageIds):
@@ -411,8 +411,10 @@ def pmailServer(lock, newMessagesArrived, Q):
           # logger.info('Refreshing saved query.')
           Q.getQuery(s, account, query, includedLabels,
                      excludedLabels, refresh=True)
-        except Exception as e:
-          logger.warning(e)
+        except KeyError:
+          pass
+        # except Exception:
+        #   logger.exception('Something unexpected happened.')
         response = None
         # response = Q.markAsRead([l[0] for l in labels])
       elif action == 'ADD_LABELS':
@@ -441,7 +443,9 @@ def pmailServer(lock, newMessagesArrived, Q):
     #   for account in config.listAccounts():
     #     UserInfo.update(s, account, None, None)
     s.commit()
+    # logger.info('Closing database connection.')
     s.close()
+    # logger.info('Closing socket connection.')
     print('closing connection..')
     conn.close()
 
@@ -475,9 +479,9 @@ def syncDb(lock, newMessagesArrived):
                                    'synced.pickle'), 'wb') as f:
               pickle.dump(False, f)
       s.close()
-    except Exception as e:
-      logger.warning(e)
-      logger.info('Unable to update DB, trying again soon.')
+    except Exception:
+      logger.exception('Unable to update DB, trying again soon.')
+    #TODO: this doesn't work as expected.
     except KeyboardInterrupt as k:
       print("Bye!")
       logger.info(k)

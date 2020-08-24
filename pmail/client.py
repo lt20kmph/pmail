@@ -79,7 +79,7 @@ def getInput(stdscr, prompt, height, width):
     if (k == 'KEY_BACKSPACE'):
       try:
         address = address[:l-1]
-      except:
+      except IndexError:
         pass
     elif (len(k) == 1) and (k != '\t'):
       if ord(k) == 27:
@@ -528,6 +528,8 @@ class State():
     self.globalLock = kwargs.get('lock', None)
     # Threading event, newMessagesArrived.
     self.newMessagesArrived = kwargs.get('newMessagesArrived', None)
+    # Thread for handling keypress.
+    self.keyHandler = kwargs.get('keyHandler', None)
 
   def read(self, messageId, message):
     self.action = Read(messageId, message)
@@ -541,8 +543,8 @@ class State():
     if subject:
       try:
         self.action.addSubject(subject)
-      except:
-        logger.warning('Trying to add subject to non-existant send action.')
+      except AttributeError:
+        logger.warning('Trying to add subject to non-existent send action.')
 
   def reply(self, messageInfo, message):
     self.action = Send(messageInfo=messageInfo, message=message, type='REPLY')
@@ -689,11 +691,11 @@ class State():
           selectedMessage.timeForReply(),
           selectedMessage.parseSender()[0],
           selectedMessage.snippet,
-          ' ' * width
-      )
+          ' ' * width)
+      # stdscr.addstr(height - 1, 0, snippet[:width - 1])
       try:
         stdscr.addstr(height - 1, 0, snippet[:width - 1])
-      except:
+      except curses.error:
         stdscr.addstr(height - 1, 0, ' ' * (width - 1))
 
 # <---
@@ -731,13 +733,10 @@ class Read(Action):
   def perform(self, state):
     message = self.message
     run(config.w3mArgs(), input=message, encoding='utf-8')
-    # finishedUpdatingLocalDb = Event()
     state.event = Event()
-    t = Thread(target=postRead,
-               name="postRead",
-               args=(mkService, state))
-    state.thread = t
-    # state.markAsRead().act()
+    state.thread = Thread(target=postRead,
+                          name="postRead",
+                          args=(mkService, state))
     return state
 
 
@@ -896,7 +895,9 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
     logger.info('Starting thread: {}.'.format(state.thread.name))
     state.thread = None
     if state.event:
+      logger.info('Waiting for thread to do something.')
       state.event.wait()
+    logger.info('Thread completed.')
 
   # Clear and refresh the screen for a blank canvas
   stdscr.clear()
@@ -910,7 +911,12 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
   #   if state.thread.name == "postRead":
   #     logger.info('Getting new message list.')
   numOfMessages = getMessages(state, returnCount=True)
-  selectedMessage = messages[state.cursor_y]
+  try:
+    selectedMessage = messages[state.cursor_y]
+  except IndexError:
+    selectedMessage = messages[state.cursor_y - 1]
+  except Exception:
+    logger.exception('Caught error trying to select a message.')
   # logger.info('Labels: {}'.format([l.label for l in messages[0].labels]))
 
   # Loop where k is the last character pressed
@@ -919,7 +925,8 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     height, width = stdscr.getmaxyx()
     state.height = height
-    # logger.info('k is {}'.format(k))
+    logger.info('k: {}'.format(k))
+    logger.info('eventQue size: {}'.format(eventQue.qsize()))
 
     if k == curses.KEY_RESIZE:
       height, width = stdscr.getmaxyx()
@@ -1057,7 +1064,7 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
       k = stdscr.getch()
       if k == ord('l'):
         # Show the labels on the highlighted message.
-        showLabels = not showLabels
+        state.showLabels = not state.showLabels
       else:
         if k == ord('u'):
           # Show unread messages.
@@ -1113,6 +1120,7 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     elif k == ord('q'):
       # Quit.
+      logger.info('Exiting normally.')
       state.quit()
       return state
 
@@ -1128,7 +1136,12 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
       state.cursor_y = max(0, state.cursor_y)
       state.cursor_y = min(height-3, state.cursor_y, numOfMessages - 1)
       # Update selected message.
-      selectedMessage = messages[state.cursor_y]
+      try:
+        selectedMessage = messages[state.cursor_y]
+      except IndexError:
+        selectedMessage = messages[state.cursor_y - 1]
+      except Exception:
+        logger.exception('Caught error trying to select a message.')
       # state.selectedMessage = selectedMessage
 
       for i, h in enumerate(messages[:height - 2]):
@@ -1191,9 +1204,10 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
     stdscr.refresh()
 
     # stdscr.nodelay(True)
-    t = Thread(target=waitForKey,args=(stdscr,eventQue),
-               daemon=True)
-    t.start()
+    if (not state.keyHandler) or (not state.keyHandler.is_alive()):
+      state.keyHandler = Thread(target=waitForKey,args=(stdscr,eventQue),
+                 daemon=True)
+      state.keyHandler.start()
 
     e = eventQue.get()
 
@@ -1201,17 +1215,15 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
       k = e['value']
     elif e['event'] == 'NewMsg':
       logger.info('Redrawing message list')
-      state.cursor_y = 0
-      state.position = 0
       messages = getMessages(state,returnCount=False)
       k = None
 
 # <---
 
 def waitForKey(stdscr,eventQue):
-  # logger.info('waiting for keypress')
+  logger.info('Waiting for keypress.')
   k = stdscr.getch()
-  # logger.info('keypress not registering')
+  logger.info('Got keypress.')
   eventQue.put({'event': 'KeyPress','value':k})
 
 # <---
@@ -1252,8 +1264,8 @@ def postDelete(state, service, messageIds):
   try:
     service(account).users().messages().batchModify(
         userId='me', body=body).execute()
-  except errors.Error as e:
-    logger.debug(e)
+  except Exception:
+    logger.exception('Something went wrong trying to delete on remote server.')
 
 
 def postSend(service, event, account, draftId, **kwargs):
@@ -1301,9 +1313,9 @@ def postSend(service, event, account, draftId, **kwargs):
     event.set()
     # make this message more useful!
     # logger.info('Email sent successfully.')
-  except Exception as e:
+  except Exception:
     # Something went wrong.
-    logger.warning(e)
+    logger.exception('Caught an Error while trying to send mail.')
 
 
 # def postRead(account, event, service, messageId, lock):
@@ -1335,7 +1347,9 @@ def postRead(service, state):
           'excludedLabels': state.excludedLabels,
           'includedLabels': state.includedLabels,
           'afterAction': 'MARK_AS_READ'}
-  sendToServer(data,lock)
+  response = sendToServer(data,lock)
+  logger.info('Response from server: {}'.format(response))
+  logger.info('Data successfully sent to server.')
   # Set event to true so that main thread can continue.
   state.event.set()
   state.selectedMessages = []
@@ -1345,8 +1359,8 @@ def postRead(service, state):
   try:
     service(account).users().messages().modify(userId='me', id=messageId,
                                                body=body).execute()
-  except errors.Error as e:
-    logger.debug(e)
+  except Exception:
+    logger.exception('Caught an error while reading mail.')
 
 # <---
 
@@ -1525,9 +1539,9 @@ def saveAttachment(service, attachment):
           with open(path, 'wb') as f:
             f.write(data)
 
-  except errors.Error as e:
-    logger.warning('An error occured while tring to save an attachment.')
-    logger.warning('An error occurred: {}'.format(e))
+  except Exception:
+    logger.exception('An error occured while tring to save an attachment.')
+    # logger.warning('An error occurred: {}'.format(e))
 
 
 def getAttachments(service, header, lock):
@@ -1572,8 +1586,8 @@ def getAttachments(service, header, lock):
           sendToServer(data,lock)
           attachments.append(a)
 
-    except errors.HttpError as e:
-      logger.debug('An error occurred: {}'.format(e))
+    except Exception:
+      logger.exception('An error occurred while getting attachments.')
   if len(attachments) == 0:
     # In the future this can probably happen automagically.
     logger.info('Attempting to remove false positive attachment signal')
@@ -1727,11 +1741,12 @@ def sendToServer(data, lock):
       sock.close()
       return unpickledResponse
 
-    except Exception as e:
-      logger.warning('Could not connect to pmailServer')
-      print('Could not connect on port!')
-      logger.debug(e)
-      sys.exit()
+    except ConnectionError:
+      raise 
+
+    except Exception:
+      logger.warning('There was an error while trying to send to server.')
+      raise
 
 
 def setEscDelay():
@@ -1768,26 +1783,38 @@ def mainLoop(lock,accountSwitcher, eventQue):
   state = State(account=account,
                 lock=lock)
   while True:
-
-    # Run inner loop and update the state when it exits.
-    state = curses.wrapper(
-      lambda x: drawMessages(x, state, accountSwitcher, eventQue))
-    if type(state.action).__name__ == 'Quit':
-      break
-    else:
-      state.act()
+    try:
+      # Run inner loop and update the state when it exits.
+      state = curses.wrapper(
+        lambda x: drawMessages(x, state, accountSwitcher, eventQue))
+      if type(state.action).__name__ == 'Quit':
+        break
+      else:
+        state.act()
+    except ConnectionError:
+      print('Could not connect to server!')
+      logger.warning('Could not connect to the server.')
+      sys.exit()
+    except Exception:
+      logger.exception('Something bad happened.')
+      sys.exit()
 
 def checkForNewMessages(lock, eventQue):
   data = {'action':'CHECK_FOR_NEW_MESSAGES',
           }
   logger.info('Asking server if anything new showed up.')
   while 1:
-    response = sendToServer(data, lock)
-    if response == 'newMessagesArrived':
-      logger.info('New message detected.')
-      # newMessagesArrived.clear()
-      eventQue.put({'event': 'NewMsg'})
-    sleep(10)
+    try:
+      response = sendToServer(data, lock)
+      if response == 'newMessagesArrived':
+        logger.info('New message detected.')
+        # newMessagesArrived.clear()
+        eventQue.put({'event': 'NewMsg'})
+      sleep(10)
+    except ConnectionError:
+      print('Could not connect to server!\r\n')
+      logger.warning('Could not connect to the server.')
+      sys.exit()
 
 def checkPrograms():
   progs = {}

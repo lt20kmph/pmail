@@ -327,16 +327,16 @@ class AddressBook(Base):
         address = a.lower().strip()
         if address not in addresses:
           newAddresses.add(address)
-    except:
-      pass
+    except Exception:
+      logger.exception('Something bad happened trying to add new addresses.')
 
     # s.query(cls).filter(cls.account == account).delete()
     # s.commit()
     try:
       session.add_all([cls(account,a) for a in newAddresses])
       session.commit()
-    except:
-      logger.info('Something went wrong trying to add new addresses.')
+    except Exception:
+      logger.exception('Something bad happened trying to commit new addresses.')
 
   @classmethod
   def addressList(cls,account):
@@ -585,8 +585,10 @@ class MessageInfo(Base):
     '''
     try:
       email = re.search('\<(.*?)\>', self.sender).group(1)
-    except:
+    except AttributeError:
       email = self.sender
+    except Exception:
+      logger.exception('An unexpected error occurred trying to parse sender.')
     name = re.sub(' \<(.*?)\>', '', self.sender)
     return email, name
 
@@ -612,7 +614,8 @@ class MessageInfo(Base):
     else:
       try:
         s = re.search('multipart/mixed', self.contentType)
-      except:
+      except Exception:
+        logger.exception('Handle this exception better!-2')
         s = False
       if s == None:
         return False
@@ -642,6 +645,8 @@ class MessageInfo(Base):
       logger.debug('Could not add: ' + str(msg))
       logger.debug("Adding label ['UNCLASSIFIED']")
       session.add(Labels(msg['id'], 'UNCLASSIFIED'))
+    except Exception:
+      logger.exception('Something bad happened while trying to add messages.')
     if headers['From']:
       header =cls(
           msg['id'],
@@ -696,7 +701,7 @@ class MessageInfo(Base):
         exception: An exception if something went wrong.
       '''
       if exception is not None:
-        logger.debug(exception)
+        logger.exception('There was an Error while trying to update db.')
         # Do something with the exception
         # See BatchHttpRequest docs
       else:
@@ -768,8 +773,8 @@ def listMessagesMatchingQuery(service, user_id, query=''):
       messages.extend(response['messages'])
 
     return messages
-  except:
-    print('An error occurred')
+  except Exception:
+    logger.exception('Error trying to list messages mathching a query.')
 
 # <---
 
