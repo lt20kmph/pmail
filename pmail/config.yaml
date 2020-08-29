@@ -7,6 +7,10 @@ behaviour:
   pager: 'w3m -T text/html -s -o display_image=False -o confirm_qq=False -o auto_image=False'
   picker: 'fzf --color=16,gutter:-1,bg+:6 --print-query --no-clear'
 
+  # Command to run after the number of unread messsages changes.
+  # Comment out for no command.
+  after_unread_change: 'polybar-msg hook email-ipc 1'
+
   # A directory to store tempory files. 
   # Default: $HOME/.local/share/pmail/tmp
   # tmp_directory:

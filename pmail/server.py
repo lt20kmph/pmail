@@ -150,6 +150,9 @@ def updateDb(account, session, service, newMessagesArrived, lastHistoryId=None):
       # (savedQuery) to be updated.
       logger.info('There are new messages!')
       newMessagesArrived.set()
+      if config.afterUnreadChange:
+        os.system(config.afterUnreadChange)
+      # os.system('polybar-msg hook email-ipc 1')
 
     MessageInfo.removeMessages(session, messagesDeleted)
     Labels.addLabels(session, labelsAdded)
@@ -511,14 +514,16 @@ def start():
   t2.start()
 
 def checkForNewMessages(id):
+  s = Session()
   for k in config.listAccounts():
     if config.accounts[k]['id'] == id:
       account = k
-  s = Session()
-  q = s.query(UserInfo.numOfUnreadMessages)\
-      .filter(UserInfo.emailAddress == account)
+  numOfUnreadMessages = UserInfo._numOfUnreadMessages(s, account)
+  # q = s.query(UserInfo.numOfUnreadMessages)\
+  #     .filter(UserInfo.emailAddress == account)
   Session.remove()
-  return(q[0][0])
+  # return(q[0][0])
+  return numOfUnreadMessages
 
 # <---
 

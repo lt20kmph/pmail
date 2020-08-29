@@ -57,6 +57,7 @@ class Config():
     self.editor = b['editor']
     self.pager = b['pager']
     self.picker = b['picker']
+    self.afterUnreadChange = b.get('after_unread_change', None)
     tmpPath = os.path.join(home,pmailDir,'tmp')
     if not os.path.exists(tmpPath):
       os.makedirs(tmpPath)
@@ -480,7 +481,11 @@ class Labels(Base):
     for (messageId, ls) in labels:
       session.query(cls).filter(cls.messageId == messageId,cls.label.in_(ls))\
           .delete(synchronize_session=False)
-      session.commit()
+      # logger.info('About to commit, after removing labels.')
+    session.commit()
+    logger.info('Committed, after removing labels.')
+    if config.afterUnreadChange:
+      os.system(config.afterUnreadChange)
 
 # ---> MessageInfo class
 
