@@ -629,19 +629,12 @@ def start():
   # Uncomment this for sql logs
   # logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
-  # parser = argparse.ArgumentParser()
-  # parser.add_argument('-n', action='store')
-  # args = parser.parse_args()
-  Q = SaveQuery()
-
-  # if args.n == None:
   lock = Lock()
   newMessagesArrived = Event()
   t1 = Thread(target=pmailServer,
-              args=(lock, newMessagesArrived, Q),
+              args=(lock, newMessagesArrived, SaveQuery()),
               daemon=True)
-  t2 = Thread(target=syncDbPubSub, args=(lock, newMessagesArrived,))
-  # t2 = Thread(target=syncDb, args=(lock, newMessagesArrived,))
+  t2 = Thread(target=syncDb, args=(lock, newMessagesArrived,))
   t1.start()
   t2.start()
 
@@ -651,10 +644,7 @@ def checkForNewMessages(id):
     if config.accounts[k]['id'] == id:
       account = k
   numOfUnreadMessages = UserInfo._numOfUnreadMessages(s, account)
-  # q = s.query(UserInfo.numOfUnreadMessages)\
-  #     .filter(UserInfo.emailAddress == account)
   Session.remove()
-  # return(q[0][0])
   return numOfUnreadMessages
 
 # <---

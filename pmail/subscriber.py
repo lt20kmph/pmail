@@ -1,8 +1,6 @@
 import os
 from pmail.common import config, logger
 from google.cloud import pubsub_v1
-from queue import Queue
-import json
 
 def subscribe(pubSubQue,account):
   accountInfo = config.accounts[account]
@@ -29,18 +27,3 @@ def subscribe(pubSubQue,account):
 
   future = subscriber.subscribe(subscription_name, callback)
   return future
-
-if __name__ == '__main__':
-  q = Queue()
-  subscribe(q,'lostoli@gmail.com')
-
-  m = q.get()
-  m = m.decode('utf-8')
-  m = json.loads(m)
-  print(m['emailAddress'])
-'''
-try:
-    future.result()
-except KeyboardInterrupt:
-    future.cancel()
-'''
