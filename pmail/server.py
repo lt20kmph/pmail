@@ -2,6 +2,7 @@
 
 # ---> Imports
 
+import json
 import pickle
 import os.path
 import os
@@ -14,9 +15,11 @@ from apiclient import errors
 from pmail.common import (mkService, Session, Labels, MessageInfo,
                     listMessagesMatchingQuery, logger,
                     UserInfo, AddressBook, config)
+from pmail.subscriber import subscribe
 from googleapiclient.http import BatchHttpRequest
 from threading import Thread, Lock, Event
-from time import sleep
+from time import sleep, time
+from queue import Queue, Empty
 
 # <---
 
@@ -361,6 +364,7 @@ def pmailServer(lock, newMessagesArrived, Q):
     # Do something and return a response.
     action = unpickledIncoming['action']
     with lock:
+      # logger.info('Server aquired the lock.')
       if action == 'CHECK_FOR_NEW_MESSAGES':
         if newMessagesArrived.is_set():
           response = 'newMessagesArrived'
@@ -452,7 +456,7 @@ def pmailServer(lock, newMessagesArrived, Q):
     print('closing connection..')
     conn.close()
 
-
+'''
 def syncDb(lock, newMessagesArrived):
   s = Session()
   while 1:
@@ -490,6 +494,133 @@ def syncDb(lock, newMessagesArrived):
       logger.info(k)
       sys.exit()
     sleep(config.updateFreq)
+'''
+
+class ClearableQueue(Queue):
+
+    def clear(self):
+        try:
+            while True:
+                self.get_nowait()
+        except Empty:
+            pass
+
+def _syncDb_pubsub(session,pubSubQue,newMessagesArrived, lock, futures):
+  for account in config.listAccounts():
+    # Check watch request has not expired.
+    ui = session.query(UserInfo).get(account)
+    if not ui:
+      logger.info('Userinfo for: {} does not exist.'.format(account))
+      ui = UserInfo(account)
+      with lock:
+        logger.info('Sync function acquired lock. About to sync.')
+        session.add(ui)
+        session.commit()
+        logger.info('Created user info for: {}'.format(account))
+    if (not ui.watchExpirey) or \
+       (ui.watchExpirey < (int(time()) + 24 * 60 * 60) * 1000):
+      logger.info('Watch does not exist or is about to expire so rewatching.')
+      service = mkService(account)
+      request = {
+          'labelIds': ['INBOX'],
+          'topicName': 'projects/{}/topics/pmail'.format(
+            config.accounts[account]['project_id']
+          )}
+      response = service.users().watch(userId='me', body=request).execute()
+      ui.watchExpirey = response['expiration']
+      with lock:
+        logger.info('Sync function acquired lock. About to sync.')
+        session.commit()
+
+    # Subscribe to pubsub topic.
+    if not futures[account] or not futures[account].running():
+      logger.info('Subscribing to pubsub topic for: {}'.format(account))
+      futures[account] = subscribe(pubSubQue,account)
+
+  try:
+    # Blocks until something is in the queue to get or timeout is reached.
+    m = pubSubQue.get(timeout=60*60*12)
+    # Clear the queue in case multiple messages built up.
+    pubSubQue.clear()
+    account = json.loads(m.decode('utf-8'))['emailAddress']
+    logger.info('There was in change in: {}'.format(account))
+    with lock:
+      logger.info('Sync function acquired lock. About to sync.')
+      __syncDb(session, account, newMessagesArrived)
+      return futures
+  except Empty:
+    logger.info('Nothing detected, but updating anyway just in case.')
+    with lock:
+      logger.info('Sync function acquired lock. About to sync.')
+      for account in config.listAccounts():
+        __syncDb(session, account, newMessagesArrived)
+      return futures
+  except Exception:
+    logger.exception('Error while getting something from the pubsub queue.')
+
+def _syncDb_freq(session,newMessagesArrived, lock):
+  for account in config.listAccounts():
+    # Check user info exists.
+    ui = session.query(UserInfo).get(account)
+    if not ui:
+      logger.info('Userinfo for: {} does not exist.'.format(account))
+      ui = UserInfo(account)
+      with lock:
+        logger.info('Sync function acquired lock. About to sync.')
+        session.add(ui)
+        session.commit()
+        logger.info('Created user info for: {}'.format(account))
+  try:
+    with lock:
+      logger.info('Sync function acquired lock. About to sync.')
+      for account in config.listAccounts():
+        __syncDb(session, account, newMessagesArrived)
+  except Exception:
+    logger.exception('Error while getting something from the pubsub queue.')
+  sleep(config.updateFreq)
+
+
+def __syncDb(session, account, newMessagesArrived):
+  ui = session.query(UserInfo).get(account)
+  if ui.shouldIupdate == False:
+    lastHistoryId = updateDb(account, session, mkService,
+                             newMessagesArrived, getLastHistoryId(account,
+                                                                  session))
+    ui.update(session, account, None, lastHistoryId)
+    logger.info('Successful partial update for {}.'.format(account))
+
+  elif ui.shouldIupdate == True:
+    ui.shouldIupdate = False
+    lastHistoryId = updateDb(account, session, mkService, newMessagesArrived)
+    ui.update(session, account, mkService(account), lastHistoryId)
+    # UserInfo.succesfulUpdate(session, account)
+    logger.info('Successful full update for {}.'.format(account))
+    with open(os.path.join(config.pickleDir, 'synced.pickle'), 'wb') as f:
+      pickle.dump(False, f)
+  session.close()
+
+def syncDb(lock, newMessagesArrived):
+  s = Session()
+  pubSubQue = ClearableQueue()
+  futures = {}
+  for account in config.listAccounts():
+    futures[account] = None
+  while 1:
+    try:
+      if config.updatePolicy == 'pubsub':
+        futures = _syncDb_pubsub(s,pubSubQue,newMessagesArrived,lock,futures)
+      elif config.updatePolicy == 'frequency':
+        _syncDb_freq(s,newMessagesArrived,lock)
+      else:
+        print('Error, update_policy seems incorrectly configured.')
+        sys.exit()
+    #TODO: this doesn't work as expected.
+    except KeyboardInterrupt as k:
+      print("Bye!")
+      logger.info(k)
+      sys.exit()
+    except Exception:
+      logger.exception('Unable to update DB, trying again soon.')
 
 
 # if __name__ == '__main__':
@@ -506,10 +637,11 @@ def start():
   # if args.n == None:
   lock = Lock()
   newMessagesArrived = Event()
-  t1 = Thread(target=pmailServer, 
+  t1 = Thread(target=pmailServer,
               args=(lock, newMessagesArrived, Q),
               daemon=True)
-  t2 = Thread(target=syncDb, args=(lock, newMessagesArrived,))
+  t2 = Thread(target=syncDbPubSub, args=(lock, newMessagesArrived,))
+  # t2 = Thread(target=syncDb, args=(lock, newMessagesArrived,))
   t1.start()
   t2.start()
 

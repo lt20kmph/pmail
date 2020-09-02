@@ -2,6 +2,7 @@
 
 # ---> Imports
 from __future__ import print_function
+from itertools import chain
 import sys
 from datetime import datetime, timezone
 import os
@@ -65,7 +66,7 @@ class Config():
     picklePath = os.path.join(home,pmailDir,'pickles')
     if not os.path.exists(picklePath):
       os.makedirs(picklePath)
-    self.pickleDir = b.get('pickle_directory', picklePath) 
+    self.pickleDir = b.get('pickle_directory', picklePath)
     dlPath = os.path.join(home,'Downloads')
     if not os.path.exists(dlPath):
       os.makedirs(dlPath)
@@ -79,8 +80,13 @@ class Config():
     if b['log_level'] in logLevels.keys():
       self.logLevel = logLevels[b['log_level']]
     else:
-      print('WARNING: log_level incorrectly configured, ' + 
+      print('WARNING: log_level incorrectly configured, ' +
             '{} is not a valid level.\r\n'.format(b['log_level']))
+      sys.exit()
+    self.updatePolicy = b.get('update_policy','frequency')
+    if self.updatePolicy not in ['frequency', 'pubsub']:
+      print("WARNING: update_policy incorrectly configured, " +
+            "update_policy must be one of 'pubsub' or 'frequency'/r/n")
       sys.exit()
     self.updateFreq = b['update_frequency']
     self.port = b['port_number']
@@ -139,14 +145,27 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.modify',
           'https://www.googleapis.com/auth/gmail.settings.basic']
 
-logging.basicConfig(filename=config.logPath,
-                    level=config.logLevel,
+class PubSubFilter(logging.Filter):
+    """Keep pubsub spam out of the log."""
+
+    def filter(self, record):
+      if (record.module == 'bidi' or
+          record.module == 'streaming_pull_manager') and\
+         (record.msg.startswith('Observed ') or
+          record.msg.startswith('Re-established stream')):
+        return False
+      return True
+
+handler = logging.FileHandler(filename=config.logPath)
+
+handler.addFilter(PubSubFilter())
+
+logging.basicConfig(level=config.logLevel,
                     format='%(levelname)s::%(asctime)s::[%(module)s]: %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S')
+                    datefmt='%Y-%m-%d %H:%M:%S',
+                    handlers=[handler])
 
 logger = logging.getLogger(__name__)
-
-
 
 DB_PATH = 'sqlite:///' + os.path.join(WORKING_DIR ,config.dbPath)
 
@@ -352,6 +371,7 @@ class UserInfo(Base):
   '''
   Store Profile information for each account.
   '''
+  #TODO: Review this, num of unreads not being used? should i update?
   __tablename__ = 'user_info'
   emailAddress = Column(String, primary_key=True)
   totalMessages = Column(Integer)
@@ -359,20 +379,21 @@ class UserInfo(Base):
   historyId = Column(Integer)
   numOfUnreadMessages = Column(Integer)
   shouldIupdate = Column(Boolean)
+  watchExpirey = Column(Integer)
   # token = Column(String)
   messages = relationship('MessageInfo', backref='user_info',
                           cascade='all, delete, delete-orphan')
   addressBook = relationship('AddressBook', backref='user_info',
                              cascade='all, delete, delete-orphan')
 
-  def __init__(self, emailAddress, totalMessages, totalThreads, historyId,
-               numOfUnreadMessages):
-    self.emailAddress = emailAddress
-    self.totalMessages = totalMessages
-    self.totalThreads = totalThreads
-    self.historyId = historyId
-    self.numOfUnreadMessages = numOfUnreadMessages
+  def __init__(self, account):
+    self.emailAddress = account
+    self.totalMessages = None
+    self.totalThreads = None
+    self.historyId = None
+    self.numOfUnreadMessages = None
     self.shouldIupdate = True
+    self.watchExpirey = None
 
 
   @staticmethod
@@ -399,8 +420,7 @@ class UserInfo(Base):
     q.shouldIupdate = False
     session.commit()
 
-  @classmethod
-  def update(cls, session, account, service, lastHistoryId):
+  def update(self, session, account, service, lastHistoryId):
     '''
     Method to update UserInfo.
 
@@ -409,29 +429,38 @@ class UserInfo(Base):
       session: A DB session
       service: API service. Possibly None, in this case we only update
       numOfUnreadMessages and possibly the lastHistoryId.
-      lastHistoryId: The history id from the last time the db was updated. 
+      lastHistoryId: The history id from the last time the db was updated.
       Possibly None, in which case do not update!
     '''
-    numOfUnreadMessages = cls._numOfUnreadMessages(session, account)
-    q = session.query(cls).get(account)
+    numOfUnreadMessages = self._numOfUnreadMessages(session, account)
+    self.numOfUnreadMessages = numOfUnreadMessages
     if service:
       profile = service.users().getProfile(userId='me').execute()
       messagesTotal = profile['messagesTotal']
       threadsTotal = profile['threadsTotal']
-      # historyId = profile['historyId']
-      if q:
-        q.messagesTotal = messagesTotal
-        q.threadsTotal = threadsTotal
-        q.historyId = lastHistoryId
-        q.numOfUnreadMessages = numOfUnreadMessages
-      else:
-        userInfo = cls(account, messagesTotal, threadsTotal, lastHistoryId,
-                   numOfUnreadMessages)
-        session.add(userInfo)
-    elif q:
-      q.numOfUnreadMessages = numOfUnreadMessages
-      if lastHistoryId:
-        q.historyId = lastHistoryId
+      self.totalMessages = messagesTotal
+      self.totalThreads = threadsTotal
+
+    self.historyId = lastHistoryId
+    # q = session.query(cls).get(account)
+    # if service:
+    #   profile = service.users().getProfile(userId='me').execute()
+    #   messagesTotal = profile['messagesTotal']
+    #   threadsTotal = profile['threadsTotal']
+    #   # historyId = profile['historyId']
+    #   if q:
+    #     q.messagesTotal = messagesTotal
+    #     q.threadsTotal = threadsTotal
+    #     q.historyId = lastHistoryId
+    #     q.numOfUnreadMessages = numOfUnreadMessages
+    #   else:
+    #     userInfo = cls(account, messagesTotal, threadsTotal, lastHistoryId,
+    #                numOfUnreadMessages)
+    #     session.add(userInfo)
+    # elif q:
+    #   q.numOfUnreadMessages = numOfUnreadMessages
+    #   if lastHistoryId:
+    #     q.historyId = lastHistoryId
     session.commit()
 
 
@@ -484,8 +513,9 @@ class Labels(Base):
       # logger.info('About to commit, after removing labels.')
     session.commit()
     logger.info('Committed, after removing labels.')
-    if config.afterUnreadChange:
-      os.system(config.afterUnreadChange)
+    if 'UNREAD' in chain(*[ls for (messageId, ls) in labels]) and\
+      config.afterUnreadChange:
+        os.system(config.afterUnreadChange)
 
 # ---> MessageInfo class
 
@@ -813,6 +843,9 @@ def myEmail(service):
 
 # Only needed to create table structure
 Base.metadata.create_all()
+
+if __name__ == '__main__':
+  pass
 
 """
 vim:foldmethod=marker foldmarker=--->,<---

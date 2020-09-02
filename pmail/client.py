@@ -925,8 +925,8 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     height, width = stdscr.getmaxyx()
     state.height = height
-    logger.info('k: {}'.format(k))
-    logger.info('eventQue size: {}'.format(eventQue.qsize()))
+    logger.info('Keypress: k = {}'.format(k))
+    # logger.info('eventQue size: {}'.format(eventQue.qsize()))
 
     if k == curses.KEY_RESIZE:
       height, width = stdscr.getmaxyx()
@@ -1221,9 +1221,9 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 # <---
 
 def waitForKey(stdscr,eventQue):
-  logger.info('Waiting for keypress.')
+  # logger.info('Waiting for keypress.')
   k = stdscr.getch()
-  logger.info('Got keypress.')
+  # logger.info('Got keypress.')
   eventQue.put({'event': 'KeyPress','value':k})
 
 # <---

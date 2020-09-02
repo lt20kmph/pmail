@@ -34,8 +34,16 @@ behaviour:
   # What kind of messages to store in the log.
   # Can be one of: INFO, WARNING.
   log_level: WARNING
+  
+  # What Strategy to use to check for updates.
+  # Can be one of 'frequency' or 'pubsub'
+  # Default to 'frequency'.
+  # If you wish to use pubsub see: here. You will need to set up a pubsub
+  # topic and set up the gmail api to publish to it.
+  update_policy: 'frequency' 
 
   # Number of seconds between updates.
+  # Only needed if update_policy is set to 'frequency'.
   update_frequency: 300
 
   # Port used for communication between the server and client.
@@ -77,3 +85,16 @@ accounts:
 
     # Path to your credentials.json file 
     credentials: '/path/to/your/credentials.json'
+
+    # The project id of your project on Google Cloud Platform.
+    # If you used the quickstart guide it will probably be something
+    # like quickstart-xxxxxxxxxxxxxxxxxxxx
+    # Only needed if update_policy is set to 'pubsub'.
+    project_id: 'quickstart-xxxxxxxxxxxxxxx'
+
+
+    # Path to credentials file for a pubsub subscription.
+    # TODO: Investigate if its really necessary to have two different
+    # credentials.
+    # Only needed if update_policy is set to 'pubsub'.
+    pubsub_credentials: '/path/to/your/pubsub/creds.json' 
