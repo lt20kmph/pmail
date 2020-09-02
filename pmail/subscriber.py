@@ -3,6 +3,17 @@ from pmail.common import config, logger
 from google.cloud import pubsub_v1
 
 def subscribe(pubSubQue,account):
+  '''
+  Function which subscribes to a pubsub topic.
+
+  Args:
+    pubSubQue: ClearableQueue object, in which we should put any messages we
+    recieve.
+    account: which account we want to subscribe for.
+
+  Returns:
+    A google.cloud.pubsub_v1.subscriber.StreamingPullFuture object.
+  '''
   accountInfo = config.accounts[account]
   project_id = accountInfo['project_id']
   os.environ['GOOGLE_APPLICATION_CREDENTIALS'] =\

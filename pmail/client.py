@@ -14,8 +14,8 @@ import logging
 
 from apiclient import errors
 from pmail.common import (mkService, Labels, MessageInfo, Attachments,
-                    listMessagesMatchingQuery, logger,
-                    UserInfo, AddressBook, config)
+                          listMessagesMatchingQuery, logger,
+                          UserInfo, AddressBook, config)
 from itertools import cycle
 from pmail.sendmail import (sendMessage, mkSubject, mkTo, createMessage)
 from subprocess import run, PIPE, Popen
@@ -26,10 +26,506 @@ from queue import Queue
 from shutil import which
 # <---
 
+# ---> State
+
+class State():
+  '''
+  Class representing the state of the program.
+  '''
+
+  def __init__(self, **kwargs):
+    # The line number of the cursor.
+    self.cursor_y = kwargs.get('cursor_y', 0)
+    # The scroll position.
+    self.position = kwargs.get('position', 0)
+    # The height of the window.
+    self.height = kwargs.get('height', 0)
+    # The next action to take.
+    self.action = kwargs.get('action', None)
+    # The selected account
+    self.account = kwargs.get('account', None)
+    # Any included labels.
+    self.includedLabels = kwargs.get('includedLabels', ['INBOX'])
+    # Any excluded labels.
+    self.excludedLabels = kwargs.get('excludedLabels', ['SPAM', 'TRASH'])
+    # Thread, which should be started in the background.
+    self.thread = kwargs.get('thread', None)
+    # Event, if not none, then we need to wait for this event.
+    self.event = kwargs.get('event', None)
+    # Any search terms in effect.
+    self.searchTerms = kwargs.get('searchTerms', None)
+    # A list of messageIds resulting from a search
+    self.query = kwargs.get('query', None)
+    # A list of selected messageIds.
+    self.selectedMessages = kwargs.get('selectedMessages', [])
+    # Visibility of labels.
+    self.showLabels = kwargs.get('showLabels', False)
+    # Global lock.
+    self.globalLock = kwargs.get('lock', None)
+    # Threading event, newMessagesArrived.
+    self.newMessagesArrived = kwargs.get('newMessagesArrived', None)
+    # Thread for handling keypress.
+    self.keyHandler = kwargs.get('keyHandler', None)
+
+  def read(self, messageId, message):
+    '''
+    Method to read mail.
+
+    Args:
+      messageId: The id of the message which will be read.
+      message: The message which will be read.
+    TODO: Why is messageId and message needed here?
+
+    Returns:
+      State()
+    '''
+    self.action = Read(messageId, message)
+    return self
+
+  def new(self, **kwargs):
+    '''
+    Method to compose new mail.
+
+    Keyword Args:
+      to: who to send the message to.
+      subject: subject of the message.
+    TODO: probably should not be keyword args...
+
+    Returns:
+      None
+    '''
+    sendTo = kwargs.get('to', None)
+    subject = kwargs.get('subject', None)
+    if sendTo:
+      self.action = Send(type='NEW', sendTo=sendTo)
+    if subject:
+      try:
+        self.action.addSubject(subject)
+      except AttributeError:
+        logger.warning('Trying to add subject to non-existent send action.')
+
+  def reply(self, messageInfo, message):
+    '''
+    Method to reply to message.
+
+    Args:
+      messageInfo: MessageInfo() object which corresponding to the mail being
+      replied to.
+      message: The message being replied to.
+
+    Returns:
+      State()
+    '''
+    self.action = Send(messageInfo=messageInfo, message=message, type='REPLY')
+    return self
+
+  def replyToAll(self, messageInfo, message):
+    '''
+    Method to reply to all.
+
+    Args:
+      messageInfo: MessageInfo() object which corresponding to the mail being
+      replied to.
+      message: The message being replied to.
+
+    Returns:
+      State()
+    '''
+    self.action = Send(messageInfo=messageInfo,
+                       message=message, type='REPLY_TO_ALL')
+    return self
+
+  def forward(self, messageInfo, message, to):
+    '''
+    Method to forward mail.
+
+    Args:
+      messageInfo: MessageInfo() object which corresponding to the mail being
+      replied to.
+      message: The message being replied to.
+      to: Who to foreward the message to.
+
+    Returns:
+      State()
+    '''
+    # logger.info("Trying to forward a mail to {}".format(to))
+    self.action = Send(messageInfo=messageInfo,
+                       message=message, type='FORWARD', sendTo=to)
+    return self
+
+  def delete(self):
+    '''
+    Method to delete messages. (mark as read and add label trash.)
+    '''
+    self.action = Modify(self.selectedMessages, type='DELETE')
+    return self
+
+  def markAsRead(self):
+    '''
+    Method to mark messages as read.
+    '''
+    self.action = Modify(self.selectedMessages, type='MARK_AS_READ')
+    return self
+
+  def trash(self):
+    '''
+    Method to trash messages. (move to trash but don't read.)
+    '''
+    self.action = Modify(self.selectedMessages, type='TRASH')
+    return self
+
+  def viewAttachments(self):
+    '''
+    Method to view attachements.
+    '''
+    attachments = getAttachments(mkService(self.account),
+                                 self.selectedMessages[0], self.globalLock)
+    if attachments:
+      self.action = ViewAttachments(attachments)
+      return True
+    else:
+      return False
+
+  def addQuery(self, searchTerms):
+    '''
+    Method to perform a search.
+    Args:
+      searchTerms: The string to search for.
+    '''
+    self.position = 0
+    if searchTerms:
+      self.query = search(self.account, searchTerms, self.globalLock)
+      self.searchTerms = searchTerms
+    else:
+      self.query = None
+      self.searchTerms = None
+    return self
+
+  def removeQuery(self):
+    '''
+    Method to cancel a search if it is in effect.
+    '''
+    self.position = 0
+    self.query = None
+    self.searchTerms = None
+    return self
+
+  def switchAccount(self, account):
+    '''
+    Method to switch account.
+    '''
+    self.account = account
+    self.position = 0
+    self.removeQuery()
+    return self
+
+  def quit(self):
+    '''
+    Method to quit.
+    '''
+    self.action = Quit()
+    return self
+
+  def act(self):
+    '''
+    Method to perform an action if one is waiting.
+    '''
+    if self.action:
+      # Perform action
+      self.action.perform(state=self)
+    else:
+      logger.warning('Tried to act, but there is no action in the queue.')
+
+# ---> mkStausBar
+  def mkStatusBar(self, stdscr, height, width, numOfMessages, selectedMessage):
+    '''
+    Draw the status bar on the screen.
+
+    Args:
+      stdscr: The curses window object.
+      height: Height of stdscr.
+      width: Width of stdscr.
+      numOfMessages: Number of messages in the current message list.
+      selectedMessage: The index of the selectedMessage.
+
+    Returns: None
+    '''
+    # user = ' \uf007 '
+    # seperator = '\uf054'
+    user = ' {} '.format(chr(config.user))
+    seperator = chr(config.seperator)
+    lUser = len(user)
+
+    account = ' {} {} {} '.format(
+        seperator,
+        self.account,
+        seperator)
+    acLen = len(account) + lUser
+
+    if self.searchTerms:
+      st = '?[{}] {} '.format(
+          self.searchTerms,
+          seperator)
+    else:
+      st = ''
+    stLen = len(st)
+
+    mb = self.includedLabels[0]
+    mbLen = len(mb)
+
+    numOfMessagesString = ' {} [{}/{} messages]'.format(
+        seperator,
+        self.position + self.cursor_y + 1,
+        numOfMessages)
+    n = len(numOfMessagesString)
+
+    if self.showLabels == True:
+      labels = str(selectedMessage.showLabels())
+    else:
+      labels = ''
+    labelsLen = len(labels)
+
+    whitespace = ' {}'.format(
+        ' ' * (width - mbLen - acLen - stLen - n - 1))
+
+    stdscr.attron(curses.color_pair(5))
+    stdscr.attron(curses.A_BOLD)
+    stdscr.addstr(height - 2, 0, user)
+    stdscr.attroff(curses.A_BOLD)
+
+    stdscr.addstr(height - 2, lUser, account)
+
+    stdscr.addstr(height - 2, acLen, st)
+
+    stdscr.attron(curses.A_BOLD)
+    stdscr.addstr(height - 2, acLen + stLen, mb)
+    stdscr.attroff(curses.A_BOLD)
+
+    stdscr.addstr(height - 2, acLen + stLen + mbLen, numOfMessagesString)
+
+    stdscr.addstr(height - 2, acLen + stLen + mbLen + n, labels)
+
+    stdscr.addstr(height - 2, acLen + stLen +
+                  mbLen + n + labelsLen, whitespace)
+    stdscr.attroff(curses.color_pair(5))
+
+    if numOfMessages > 0:
+      snippet = ' On {} <{}> wrote: {} {}'.format(
+          selectedMessage.timeForReply(),
+          selectedMessage.parseSender()[0],
+          selectedMessage.snippet,
+          ' ' * width)
+      # stdscr.addstr(height - 1, 0, snippet[:width - 1])
+      try:
+        stdscr.addstr(height - 1, 0, snippet[:width - 1])
+      except curses.error:
+        stdscr.addstr(height - 1, 0, ' ' * (width - 1))
+
+# <---
+
+#<---
+
+# ---> Actions
+
+ACTIONS = {
+    'READ_A_MAIL',
+    'MARK_AS_READ',
+    'REMOVE_LABELS',
+    'ADD_LABELS',
+    'SEND_A_MAIL',
+    'FORWARD',
+    'REPLY',
+    'REPLY_TO_ALL',
+    'DELETE',
+    'DO_NOT_SEND',
+}
+
+class Action():
+  '''
+  Class representing actions.
+  Other actions inherit anything here, but so far there is nothing here.
+  '''
+
+  def __init__(self, action):
+    self.action = action
+
+
+class Read(Action):
+  '''
+  Class to read an email.
+  '''
+  def __init__(self, messageId, message):
+    self.messageId = messageId
+    self.message = message
+    Action.__init__(self, 'READ')
+
+  def perform(self, state):
+    message = self.message
+    run(config.w3mArgs(), input=message, encoding='utf-8')
+    state.event = Event()
+    state.thread = Thread(target=postRead,
+                          name="postRead",
+                          args=(mkService, state))
+    return state
+
+
+class Modify(Action):
+  '''
+  Class to modify an message.
+  Can add or remove labels.
+  '''
+
+  def __init__(self, selectedMessages, type):
+    self.selectedMessages = selectedMessages
+    self.type = type
+    Action.__init__(self, 'MODIFY')
+
+  def perform(self, state):
+
+    ms = self.selectedMessages
+    lock = state.globalLock
+
+    if self.type == 'DELETE':
+      logger.info('Modify local label DB: + "TRASH", - "UNREAD".')
+      data = {'action': 'ADD_LABELS',
+              'labels': [(m.messageId, ['TRASH']) for m in ms]}
+      sendToServer(data, lock)
+      data = {'action': 'REMOVE_LABELS',
+              'labels': [(m.messageId, ['UNREAD']) for m in ms]}
+      sendToServer(data, lock)
+
+    elif self.type == 'MARK_AS_READ':
+      # Remove 'UNREAD' labels.
+      logger.info('Modify local label DB: - "UNREAD".')
+      data = {'action': 'REMOVE_LABELS',
+              'labels': [(m.messageId, ['UNREAD']) for m in ms]}
+      sendToServer(data, lock)
+
+    elif self.type == 'TRASH':
+      # Remove 'UNREAD' labels.
+      logger.info('Modify local label DB: + "TRASH".')
+      data = {'action': 'ADD_LABELS',
+              'labels': [(m.messageId, ['TRASH']) for m in ms]}
+      sendToServer(data, lock)
+
+    t = Thread(target=postDelete, name='DELETE',
+               args=(state, mkService, [m.messageId for m in ms]))
+    t.start()
+
+
+class Send(Action):
+  '''
+  Class to send an email.
+  '''
+  def __init__(self, **kwargs):
+    self.messageInfo = kwargs.get('messageInfo', None)
+    self.message = kwargs.get('message', None)
+    self.sendTo = kwargs.get('sendTo', None)
+    self.type = kwargs.get('type', None)
+    Action.__init__(self, 'SEND')
+
+  def addSubject(self, subject):
+    self.subject = subject
+
+  def confirm(self, account):
+    curses.wrapper(lambda x: drawConfirmationScreen(x, account, self))
+
+  def perform(self, state):
+    if self.type == 'NEW':
+      draftId = str(uuid4())
+      messageInfo = None
+      input = None
+
+    elif self.type in ['REPLY', 'FORWARD', 'REPLY_TO_ALL']:
+      messageInfo = self.messageInfo
+      message, draftId = self.message, messageInfo.messageId
+
+      self.subject = mkSubject(messageInfo, self.type)
+
+      if self.type in ['REPLY', 'REPLY_TO_ALL']:
+        self.sendTo = mkTo(state.account, messageInfo, self.type)
+      # elif self.type in ['FORWARD']:
+        # logger.info('self.sendTo = {}'.format(self.sendTo))
+
+      # First format the message.
+      formatedMessage = run(config.w3mArgs(), input=message,
+                            encoding='utf-8', stdout=PIPE)
+
+      # Rewrite mkReplyInfo/mkForwardInfo...
+      input = addInfo(messageInfo, formatedMessage, self.type)
+
+    # Check that tmp file doesn't exist and remove if it does.
+    if os.path.exists(os.path.join(config.tmpDir, draftId)):
+      os.remove(os.path.join(config.tmpDir, draftId))
+
+    # Open the formated message in vim.
+    run(config.vimArgs(draftId), input=input, encoding='utf-8')
+
+    # Check that tmp file exists ready to be sent.
+    if os.path.exists(os.path.join(config.tmpDir, draftId)):
+      type = self.type if self.type in [
+          'NEW', 'FORWARD'] else 'REPLY'
+
+      # Run confirmation loop.
+      self.confirm(state.account)
+
+      # Make the thread.
+      if self.send == 'SEND':
+        finishedUpdatingLocalDb = Event()
+        t = Thread(target=postSend, name="postSend",
+                   args=(mkService, finishedUpdatingLocalDb,
+                         state.account, draftId),
+                   kwargs={'type': type,
+                           'attachments': self.attachments,
+                           'to': self.sendTo,
+                           'cc': self.cc,
+                           'bcc': self.bcc,
+                           'subject': self.subject,
+                           'globalLock': state.globalLock,
+                           'messageInfo': messageInfo})
+        state.thread = t
+        state.event = finishedUpdatingLocalDb
+      elif self.send == 'DO_NOT_SEND':
+        state.thread = None
+    else:
+      state.thread = None
+    return state
+
+
+class ViewAttachments(Action):
+  '''
+  Class to view attachements.
+  '''
+  def __init__(self, attachments):
+    self.attachments = attachments
+    Action.__init__(self, 'VIEW_ATTACHMENTS')
+
+  def perform(self, state):
+    # do something here and return something depending on if succesful or not
+    curses.wrapper(lambda x: drawAttachments(
+        x, state.account, state, self.attachments))
+
+
+class Quit(Action):
+  '''
+  Class to quit.
+  '''
+  def __init__(self):
+    #This is the only place where the underlying Action class is used.
+    Action.__init__(self, 'QUIT')
+
+  def perform(self):
+    pass
+
+# <---
+
 # ---> Curses functions
 
 
 def initColors():
+  '''
+  Initialise curses colors.
+  '''
   curses.start_color()
   curses.use_default_colors()
   # Color pair for main list.
@@ -106,146 +602,6 @@ def putMessage(stdscr, height, width, message):
 
 # <---
 
-# ---> Statusbar class
-
-
-'''
-class StatusBarInfo():
-  Class to store various data needed to render the status bar and a
-  method to render it.
-
-  Args:
-    account: Currently selected account.
-    includedLabels: Labels included in the filter in __getHeaders.
-    excludedLabels: Labels excluded by the filter in __getHeaders.
-    selectedHeader: The hightlighted message.
-    searchTerms: The terms searched for, if any.
-    numOfMessages: The number of messages in the query returned by __getHeaders.
-    totalMessages: The total num of messages in account. (not used atm)
-    currentMessageIndex: The index of the highlighted message.
-    showLabels: A list of labels attached to the highlighted message.
-
-  def __init__(self, currentAccount, includedLabels,
-               excludedLabels, selectedHeader, searchTerms,
-               numOfMessages, totalMessages, currentMessageIndex,
-               showLabels):
-    self.currentAccount = currentAccount
-    self.includedLabels = includedLabels
-    self.excludedLabels = excludedLabels
-    self.selectedHeader = selectedHeader
-    self.searchTerms = searchTerms
-    self.numOfMessages = numOfMessages
-    self.totalMessages = totalMessages
-    self.currentMessageIndex = currentMessageIndex
-    self.showLabels = showLabels
-
-  def mkStatusBar(self, stdscr, height, width):
-    Draw the status bar on the screen.
-
-    Args:
-      stdscr: The curses window object.
-      height: Height of stdscr.
-      width: Width of stdscr.
-
-    Returns: None
-    # user = ' \uf007 '
-    # seperator = '\uf054'
-    user = ' {} '.format(chr(config.user))
-    seperator = chr(config.seperator)
-    lUser = len(user)
-
-    account = ' {} {} {} '.format(
-        seperator,
-        self.currentAccount,
-        seperator)
-    acLen = len(account) + lUser
-
-    if self.searchTerms:
-      st = '?[{}] {} '.format(
-          self.searchTerms,
-          seperator)
-    else:
-      st = ''
-    stLen = len(st)
-
-    mb = self.includedLabels[0]
-    mbLen = len(mb)
-
-    numOfMessages = ' {} [{}/{} messages]'.format(
-        seperator,
-        self.currentMessageIndex,
-        self.numOfMessages)
-    n = len(numOfMessages)
-
-    if self.showLabels == True:
-      labels = str(self.selectedHeader.showLabels())
-    else:
-      labels = ''
-    labelsLen = len(labels)
-
-    whitespace = ' {}'.format(
-        ' ' * (width - mbLen - acLen - stLen - n - 1))
-
-    stdscr.attron(curses.color_pair(5))
-    stdscr.attron(curses.A_BOLD)
-    stdscr.addstr(height - 2, 0, user)
-    stdscr.attroff(curses.A_BOLD)
-
-    stdscr.addstr(height - 2, lUser, account)
-
-    stdscr.addstr(height - 2, acLen, st)
-
-    stdscr.attron(curses.A_BOLD)
-    stdscr.addstr(height - 2, acLen + stLen, mb)
-    stdscr.attroff(curses.A_BOLD)
-
-    stdscr.addstr(height - 2, acLen + stLen + mbLen, numOfMessages)
-
-    stdscr.addstr(height - 2, acLen + stLen + mbLen + n, labels)
-
-    stdscr.addstr(height - 2, acLen + stLen +
-                  mbLen + n + labelsLen, whitespace)
-    stdscr.attroff(curses.color_pair(5))
-
-    if self.numOfMessages > 0:
-      snippet = ' On {} <{}> wrote: {} {}'.format(
-          self.selectedHeader.timeForReply(),
-          self.selectedHeader.parseSender()[0],
-          self.selectedHeader.snippet,
-          ' ' * width
-      )
-      try:
-        stdscr.addstr(height - 1, 0, snippet[:width - 1])
-      except:
-        stdscr.addstr(height - 1, 0, ' ' * (width - 1))
-'''
-
-# <---
-
-
-''' probbaly won't include this
-def showSnippet(stdscr, height, width, snippet):
-  k = 0
-  while k != ord('q'):
-    height, width = stdscr.getmaxyx()
-    w = min(80 + width % 2, width - 2)
-    indent = (width - w)//2
-    lines = wrap(snippet, width=(w - 2))
-    top = (height - len(lines))//2
-    for i, l in enumerate(lines):
-      stdscr.attron(curses.color_pair(25))
-      stdscr.addstr(top+i, indent, ' ' + l + ' ')
-      ln = len(l)
-      stdscr.addstr(top+i, indent + ln + 2, ' '*(w - ln - 2))
-      stdscr.attroff(curses.color_pair(25))
-    stdscr.refresh()
-    k = stdscr.getch()
-
-
-def search(results,excludedLabels,includedLabels):
-    return _getHeaders(results,excludedLabels,includedLabels)
-'''
-
 # ---> Confirmation Screen
 
 
@@ -258,7 +614,7 @@ def drawConfirmationScreen(stdscr, account, sendAction):
   Args:
     stdscr: The curses window object.
     account: Currently selected account.
-    state: The state of the program.
+    sendAction: The Send() object which we are confirming.
 
   Returns:
     state: The state of the program.
@@ -409,7 +765,7 @@ def drawConfirmationScreen(stdscr, account, sendAction):
 def drawAttachments(stdscr, account, state, attachments):
   '''
   Draw a list of attachments.
-  Currently not handerlin the case when len(attachments) > height.
+  Currently not handeling the case when len(attachments) > height.
 
   Args:
     stdscr: The curses window object.
@@ -491,390 +847,6 @@ def drawAttachments(stdscr, account, state, attachments):
 # ---> Draw message list
 
 
-class State():
-  '''
-  Class representing the state of the program.
-  TODO: implement as singleton.
-  '''
-
-  def __init__(self, **kwargs):
-    # The line number of the cursor.
-    self.cursor_y = kwargs.get('cursor_y', 0)
-    # The scroll position.
-    self.position = kwargs.get('position', 0)
-    # The height of the window.
-    self.height = kwargs.get('height', 0)
-    # The next action to take.
-    self.action = kwargs.get('action', None)
-    # The selected account
-    self.account = kwargs.get('account', None)
-    # Any included labels.
-    self.includedLabels = kwargs.get('includedLabels', ['INBOX'])
-    # Any excluded labels.
-    self.excludedLabels = kwargs.get('excludedLabels', ['SPAM', 'TRASH'])
-    # Thread, which should be started in the background.
-    self.thread = kwargs.get('thread', None)
-    # Event, if not none, then we need to wait for this event.
-    self.event = kwargs.get('event', None)
-    # Any search terms in effect.
-    self.searchTerms = kwargs.get('searchTerms', None)
-    # A list of messageIds resulting from a search
-    self.query = kwargs.get('query', None)
-    # A list of selected messageIds.
-    self.selectedMessages = kwargs.get('selectedMessages', [])
-    # Visibility of labels.
-    self.showLabels = kwargs.get('showLabels', False)
-    # Global lock.
-    self.globalLock = kwargs.get('lock', None)
-    # Threading event, newMessagesArrived.
-    self.newMessagesArrived = kwargs.get('newMessagesArrived', None)
-    # Thread for handling keypress.
-    self.keyHandler = kwargs.get('keyHandler', None)
-
-  def read(self, messageId, message):
-    self.action = Read(messageId, message)
-    return self
-
-  def new(self, **kwargs):
-    sendTo = kwargs.get('to', None)
-    subject = kwargs.get('subject', None)
-    if sendTo:
-      self.action = Send(type='NEW', sendTo=sendTo)
-    if subject:
-      try:
-        self.action.addSubject(subject)
-      except AttributeError:
-        logger.warning('Trying to add subject to non-existent send action.')
-
-  def reply(self, messageInfo, message):
-    self.action = Send(messageInfo=messageInfo, message=message, type='REPLY')
-    return self
-
-  def replyToAll(self, messageInfo, message):
-    self.action = Send(messageInfo=messageInfo,
-                       message=message, type='REPLY_TO_ALL')
-    return self
-
-  def forward(self, messageInfo, message, to):
-    # logger.info("Trying to forward a mail to {}".format(to))
-    self.action = Send(messageInfo=messageInfo,
-                       message=message, type='FORWARD', sendTo=to)
-    return self
-
-  def delete(self):
-    self.action = Modify(self.selectedMessages, type='DELETE')
-    return self
-
-  def markAsRead(self):
-    self.action = Modify(self.selectedMessages, type='MARK_AS_READ')
-    return self
-
-  def trash(self):
-    self.action = Modify(self.selectedMessages, type='TRASH')
-    return self
-
-  def viewAttachments(self):
-    attachments = getAttachments(mkService(self.account),
-                                 self.selectedMessages[0], self.globalLock)
-    if attachments:
-      self.action = ViewAttachments(attachments)
-      return True
-    else:
-      return False
-
-  def addQuery(self, searchTerms):
-    self.position = 0
-    if searchTerms:
-      self.query = search(self.account, searchTerms, self.globalLock)
-      self.searchTerms = searchTerms
-    else:
-      self.query = None
-      self.searchTerms = None
-    return self
-
-  def removeQuery(self):
-    self.position = 0
-    self.query = None
-    self.searchTerms = None
-    return self
-
-  def switchAccount(self, account):
-    self.account = account
-    self.position = 0
-    self.removeQuery()
-    return self
-
-  def quit(self):
-    self.action = Quit()
-    return self
-
-  def act(self):
-    if self.action:
-      # Perform action
-      self.action.perform(state=self)
-    else:
-      logger.warning('Tried to act, but there is no action in the queue.')
-
-# ---> mkStausBar
-  def mkStatusBar(self, stdscr, height, width, numOfMessages, selectedMessage):
-    '''
-    Draw the status bar on the screen.
-
-    Args:
-      stdscr: The curses window object.
-      height: Height of stdscr.
-      width: Width of stdscr.
-
-    Returns: None
-    '''
-    # user = ' \uf007 '
-    # seperator = '\uf054'
-    user = ' {} '.format(chr(config.user))
-    seperator = chr(config.seperator)
-    lUser = len(user)
-
-    account = ' {} {} {} '.format(
-        seperator,
-        self.account,
-        seperator)
-    acLen = len(account) + lUser
-
-    if self.searchTerms:
-      st = '?[{}] {} '.format(
-          self.searchTerms,
-          seperator)
-    else:
-      st = ''
-    stLen = len(st)
-
-    mb = self.includedLabels[0]
-    mbLen = len(mb)
-
-    numOfMessagesString = ' {} [{}/{} messages]'.format(
-        seperator,
-        self.position + self.cursor_y + 1,
-        numOfMessages)
-    n = len(numOfMessagesString)
-
-    if self.showLabels == True:
-      labels = str(selectedMessage.showLabels())
-    else:
-      labels = ''
-    labelsLen = len(labels)
-
-    whitespace = ' {}'.format(
-        ' ' * (width - mbLen - acLen - stLen - n - 1))
-
-    stdscr.attron(curses.color_pair(5))
-    stdscr.attron(curses.A_BOLD)
-    stdscr.addstr(height - 2, 0, user)
-    stdscr.attroff(curses.A_BOLD)
-
-    stdscr.addstr(height - 2, lUser, account)
-
-    stdscr.addstr(height - 2, acLen, st)
-
-    stdscr.attron(curses.A_BOLD)
-    stdscr.addstr(height - 2, acLen + stLen, mb)
-    stdscr.attroff(curses.A_BOLD)
-
-    stdscr.addstr(height - 2, acLen + stLen + mbLen, numOfMessagesString)
-
-    stdscr.addstr(height - 2, acLen + stLen + mbLen + n, labels)
-
-    stdscr.addstr(height - 2, acLen + stLen +
-                  mbLen + n + labelsLen, whitespace)
-    stdscr.attroff(curses.color_pair(5))
-
-    if numOfMessages > 0:
-      snippet = ' On {} <{}> wrote: {} {}'.format(
-          selectedMessage.timeForReply(),
-          selectedMessage.parseSender()[0],
-          selectedMessage.snippet,
-          ' ' * width)
-      # stdscr.addstr(height - 1, 0, snippet[:width - 1])
-      try:
-        stdscr.addstr(height - 1, 0, snippet[:width - 1])
-      except curses.error:
-        stdscr.addstr(height - 1, 0, ' ' * (width - 1))
-
-# <---
-
-
-ACTIONS = {
-    'READ_A_MAIL',
-    'MARK_AS_READ',
-    'REMOVE_LABELS',
-    'ADD_LABELS',
-    'SEND_A_MAIL',
-    'FORWARD',
-    'REPLY',
-    'REPLY_TO_ALL',
-    'DELETE',
-    'DO_NOT_SEND',
-}
-
-
-class Action():
-  '''
-  Class representing actions.
-  '''
-
-  def __init__(self, action):
-    self.action = action
-
-
-class Read(Action):
-  def __init__(self, messageId, message):
-    self.messageId = messageId
-    self.message = message
-    Action.__init__(self, 'READ')
-
-  def perform(self, state):
-    message = self.message
-    run(config.w3mArgs(), input=message, encoding='utf-8')
-    state.event = Event()
-    state.thread = Thread(target=postRead,
-                          name="postRead",
-                          args=(mkService, state))
-    return state
-
-
-class Modify(Action):
-
-  def __init__(self, selectedMessages, type):
-    self.selectedMessages = selectedMessages
-    self.type = type
-    Action.__init__(self, 'MODIFY')
-
-  def perform(self, state):
-
-    ms = self.selectedMessages
-    lock = state.globalLock
-
-    if self.type == 'DELETE':
-      logger.info('Modify local label DB: + "TRASH", - "UNREAD".')
-      data = {'action': 'ADD_LABELS',
-              'labels': [(m.messageId, ['TRASH']) for m in ms]}
-      sendToServer(data,lock)
-      data = {'action': 'REMOVE_LABELS',
-              'labels': [(m.messageId, ['UNREAD']) for m in ms]}
-      sendToServer(data,lock)
-
-    elif self.type == 'MARK_AS_READ':
-      # Remove 'UNREAD' labels.
-      logger.info('Modify local label DB: - "UNREAD".')
-      data = {'action': 'REMOVE_LABELS',
-              'labels': [(m.messageId, ['UNREAD']) for m in ms]}
-      sendToServer(data,lock)
-
-    elif self.type == 'TRASH':
-      # Remove 'UNREAD' labels.
-      logger.info('Modify local label DB: + "TRASH".')
-      data = {'action': 'ADD_LABELS',
-              'labels': [(m.messageId, ['TRASH']) for m in ms]}
-      sendToServer(data,lock)
-
-    t = Thread(target=postDelete, name='DELETE',
-               args=(state, mkService, [m.messageId for m in ms]))
-    t.start()
-
-
-class Send(Action):
-  def __init__(self, **kwargs):
-    self.messageInfo = kwargs.get('messageInfo', None)
-    self.message = kwargs.get('message', None)
-    self.sendTo = kwargs.get('sendTo', None)
-    self.type = kwargs.get('type', None)
-    Action.__init__(self, 'SEND')
-
-  def addSubject(self, subject):
-    self.subject = subject
-
-  def confirm(self, account):
-    curses.wrapper(lambda x: drawConfirmationScreen(x, account, self))
-
-  def perform(self, state):
-    if self.type == 'NEW':
-      draftId = str(uuid4())
-      messageInfo = None
-      input = None
-
-    elif self.type in ['REPLY', 'FORWARD', 'REPLY_TO_ALL']:
-      messageInfo = self.messageInfo
-      message, draftId = self.message, messageInfo.messageId
-
-      self.subject = mkSubject(messageInfo, self.type)
-
-      if self.type in ['REPLY', 'REPLY_TO_ALL']:
-        self.sendTo = mkTo(state.account, messageInfo, self.type)
-      # elif self.type in ['FORWARD']:
-        # logger.info('self.sendTo = {}'.format(self.sendTo))
-
-      # First format the message.
-      formatedMessage = run(config.w3mArgs(), input=message,
-                            encoding='utf-8', stdout=PIPE)
-
-      # Rewrite mkReplyInfo/mkForwardInfo...
-      input = addInfo(messageInfo, formatedMessage, self.type)
-
-    # Check that tmp file doesn't exist and remove if it does.
-    if os.path.exists(os.path.join(config.tmpDir, draftId)):
-      os.remove(os.path.join(config.tmpDir, draftId))
-
-    # Open the formated message in vim.
-    run(config.vimArgs(draftId), input=input, encoding='utf-8')
-
-    # Check that tmp file exists ready to be sent.
-    if os.path.exists(os.path.join(config.tmpDir, draftId)):
-      type = self.type if self.type in [
-          'NEW', 'FORWARD'] else 'REPLY'
-
-      # Run confirmation loop.
-      self.confirm(state.account)
-
-      # Make the thread.
-      if self.send == 'SEND':
-        finishedUpdatingLocalDb = Event()
-        t = Thread(target=postSend, name="postSend",
-                   args=(mkService, finishedUpdatingLocalDb,
-                         state.account, draftId),
-                   kwargs={'type': type,
-                           'attachments': self.attachments,
-                           'to': self.sendTo,
-                           'cc': self.cc,
-                           'bcc': self.bcc,
-                           'subject': self.subject,
-                           'globalLock': state.globalLock,
-                           'messageInfo': messageInfo})
-        state.thread = t
-        state.event = finishedUpdatingLocalDb
-      elif self.send == 'DO_NOT_SEND':
-        state.thread = None
-    else:
-      state.thread = None
-    return state
-
-
-class ViewAttachments(Action):
-  def __init__(self, attachments):
-    self.attachments = attachments
-    Action.__init__(self, 'VIEW_ATTACHMENTS')
-
-  def perform(self, state):
-    # do something here and return something depending on if succesful or not
-    curses.wrapper(lambda x: drawAttachments(
-        x, state.account, state, self.attachments))
-
-
-class Quit(Action):
-  def __init__(self):
-    Action.__init__(self, 'QUIT')
-
-  def perform(self):
-    pass
-
-
 def drawMessages(stdscr, state, accountSwitcher, eventQue):
   '''
   Loop to draw main screen of the program. A list of messages, which
@@ -883,6 +855,12 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
   Args:
     stdscr: The curses window object.
     state: The state of the program.
+    accountSwitcher: n-cycle to cycle through accounts where n is the number
+    of accounts.
+    eventQue: A Queue which will contain events when new messages show up.
+
+  Returns:
+    State()
   '''
   # Start colors in curses
   curses.curs_set(0)
@@ -1204,9 +1182,16 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
     stdscr.refresh()
 
     # stdscr.nodelay(True)
+    def waitForKey(stdscr, eventQue):
+      '''
+      Helper to wait for keypresses and put them into the queue.
+      '''
+      k = stdscr.getch()
+      eventQue.put({'event': 'KeyPress', 'value': k})
+
     if (not state.keyHandler) or (not state.keyHandler.is_alive()):
-      state.keyHandler = Thread(target=waitForKey,args=(stdscr,eventQue),
-                 daemon=True)
+      state.keyHandler = Thread(target=waitForKey, args=(stdscr, eventQue),
+                                daemon=True)
       state.keyHandler.start()
 
     e = eventQue.get()
@@ -1215,16 +1200,10 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
       k = e['value']
     elif e['event'] == 'NewMsg':
       logger.info('Redrawing message list')
-      messages = getMessages(state,returnCount=False)
+      messages = getMessages(state, returnCount=False)
       k = None
 
 # <---
-
-def waitForKey(stdscr,eventQue):
-  # logger.info('Waiting for keypress.')
-  k = stdscr.getch()
-  # logger.info('Got keypress.')
-  eventQue.put({'event': 'KeyPress','value':k})
 
 # <---
 
@@ -1297,7 +1276,7 @@ def postSend(service, event, account, draftId, **kwargs):
     # Send the message.
     message = sendMessage(service(account), account, message)
     logger.info('Sent a message.')
-    # Mark it as read if it wasn't already.
+    # TODO: Mark it as read if it wasn't already.
     # if kwargs['type'] in ['REPLY', 'FORWARD']:
     # messageInfo = kwargs['messageInfo']
     # postRead(account, event, service, messageInfo.messageId)
@@ -1307,8 +1286,8 @@ def postSend(service, event, account, draftId, **kwargs):
     data = {'action': 'ADD_MESSAGES',
             'account': account,
             'messageIds': [message['id']]}
-    lock = kwargs.get('globalLock',None)
-    sendToServer(data,lock)
+    lock = kwargs.get('globalLock', None)
+    sendToServer(data, lock)
     # logger.info('data sent to server')
     event.set()
     # make this message more useful!
@@ -1324,17 +1303,14 @@ def postRead(service, state):
   Mark message as read after reading.
 
   Args:
-    account: The currently selected account.
-    event: threading.Event object - set it to true once local db has updated.
     service: The google API service object.
-    messageId: The id of the highlighted message.
+    state: State() state of the program.
 
   Returns:
     None
   '''
   # Mark message as read.
   # Remove 'UNREAD' label from local storage.
-  # logger.info('Removing label from local storage.')
   account = state.account
   messageId = state.selectedMessages[0].messageId
   lock = state.globalLock
@@ -1347,9 +1323,9 @@ def postRead(service, state):
           'excludedLabels': state.excludedLabels,
           'includedLabels': state.includedLabels,
           'afterAction': 'MARK_AS_READ'}
-  response = sendToServer(data,lock)
+  response = sendToServer(data, lock)
   logger.info('Response from server: {}'.format(response))
-  logger.info('Data successfully sent to server.')
+  # logger.info('Data successfully sent to server.')
   # Set event to true so that main thread can continue.
   state.event.set()
   state.selectedMessages = []
@@ -1375,7 +1351,7 @@ def readMessage(service, messageId):
     service: The google API service object.
     messageId: The id of the message to retrive.
 
-  Reurns:
+  Returns:
     The message as a string ready for w3m.
   '''
   msg = service.users().messages().get(
@@ -1384,84 +1360,6 @@ def readMessage(service, messageId):
   msg = base64.urlsafe_b64decode(msg).decode('utf-8')
   msg = email.message_from_string(msg, policy=email.policy.default)
   return msg.get_body(('html', 'plain',)).get_content()
-
-
-'''
-def preSend(sender, state):
-  Collect and organise various information
-  prior to actually sending the mail.
-
-  Args:
-    sender: Who will send the email.
-    state: A dictonary with various information
-      action: One of NEW, REPLY, FORWARD, REPLYTOALL.
-      to: Who to send the mail to. Only needed if action is NEW or FORWARD.
-      subject: Only if action is NEW.
-      message: Present unless action is NEW. It is the message being replied
-        to/forwarded.
-      header: If action is not NEW, this must be present.
-
-  Returns:
-    state: Same as input, and unless the user had a change of heart
-      a thread key.
-      thread: Thread to be run later.
-  if state['action'] == 'NEW':
-    draftId = str(uuid4())
-    header = None
-    input = None
-
-  elif state['action'] in ['REPLY', 'FORWARD', 'REPLYTOALL']:
-    header = state['header']
-    message, draftId = state['message'], header.messageId
-
-    state['subject'] = mkSubject(header, state['action'])
-
-    if state['action'] in ['REPLY', 'REPLYTOALL']:
-      state['to'] = mkTo(sender, header, state['action'])
-
-    # First format the message.
-    formatedMessage = run(config.w3mArgs(), input=message,
-                          encoding='utf-8', stdout=PIPE)
-
-    # Rewrite mkReplyInfo/mkForwardInfo...
-    input = addInfo(header, formatedMessage, state['action'])
-
-  # Check that tmp file doesn't exist and remove if it does.
-  if os.path.exists(os.path.join(config.tmpDir, draftId)):
-    os.remove(os.path.join(config.tmpDir, draftId))
-
-  # Open the formated message in vim.
-  run(config.vimArgs(draftId), input=input, encoding='utf-8')
-
-  # Check that tmp file exists ready to be sent.
-  if os.path.exists(os.path.join(config.tmpDir, draftId)):
-    type = state['action'] if state['action'] in [
-        'NEW', 'FORWARD'] else 'REPLY'
-
-    # Run confirmation loop.
-    state = curses.wrapper(lambda x: drawConfirmationScreen(x, sender, state))
-
-    # Make the thread.
-    if state['action'] == 'SEND':
-      finishedUpdatingLocalDb = Event()
-      t = Thread(target=postSend,
-                 args=(mkService, finishedUpdatingLocalDb, sender, draftId),
-                 kwargs={'type': type,
-                         'attachments': state['attachments'],
-                         'to': state['to'],
-                         'cc': state['cc'],
-                         'bcc': state['bcc'],
-                         'subject': state['subject'],
-                         'header': header})
-      state['thread'] = t
-      state['event'] = finishedUpdatingLocalDb
-    elif state['action'] == 'DO_NOT_SEND':
-      state.pop('thread', None)
-  else:
-    state.pop('thread', None)
-  return state
-
-'''
 
 
 def addInfo(header, formatedMessage, type):
@@ -1561,7 +1459,7 @@ def getAttachments(service, header, lock):
   data = {'action': 'GET_QUERY',
           'class': Attachments,
           'messageIds': [messageId]}
-  q = sendToServer(data,lock)
+  q = sendToServer(data, lock)
   # q = s.query(Attachments).filter(Attachments.messageId == messageId)
   if len(q) > 0:
     # Attachment info exists in db - use this.
@@ -1583,7 +1481,7 @@ def getAttachments(service, header, lock):
           # s.add(a)
           data = {'action': 'ADD_ATTACHMENT',
                   'attachment': a}
-          sendToServer(data,lock)
+          sendToServer(data, lock)
           attachments.append(a)
 
     except Exception:
@@ -1593,7 +1491,7 @@ def getAttachments(service, header, lock):
     logger.info('Attempting to remove false positive attachment signal')
     data = {'action': 'REMOVE_FALSE_ATTACMENTS',
             'messageId': messageId}
-    sendToServer(data,lock)
+    sendToServer(data, lock)
     # q = s.query(MessageInfo).filter(MessageInfo.messageId == messageId)\
     #     .update({MessageInfo.hasAttachments: False},
     #             synchronize_session='evaluate')
@@ -1625,11 +1523,11 @@ def search(account, searchTerms, lock):
   data = {'action': 'ADD_MESSAGES',
           'account': account,
           'messageIds': messageIds}
-  sendToServer(data,lock)
+  sendToServer(data, lock)
   data = {'action': 'GET_QUERY',
           'class': MessageInfo,
           'messageIds': messageIds}
-  return [q.messageId for q in sendToServer(data,lock)]
+  return [q.messageId for q in sendToServer(data, lock)]
 
 
 def listFiles(directory):
@@ -1648,7 +1546,6 @@ def chooseAttachment(x): return fzf(
 
 def chooseAddress(x): return fzf(
     'To: ', AddressBook.addressList(x))
-
 
 '''
 # Wrapper for fzf to dump and restore window state before and after.
@@ -1715,6 +1612,17 @@ def fzf(prompt, iterable):
 
 
 def sendToServer(data, lock):
+  '''
+  Function to send data to the server.
+
+  Args:
+    data: What ever we should send to the server.
+    lock: threading.Lock().
+
+  Returns:
+    A response from the server (possibly None).
+
+  '''
   with lock:
     host = socket.gethostname()
     port = config.port
@@ -1742,7 +1650,7 @@ def sendToServer(data, lock):
       return unpickledResponse
 
     except ConnectionError:
-      raise 
+      raise
 
     except Exception:
       logger.warning('There was an error while trying to send to server.')
@@ -1758,6 +1666,16 @@ def setEscDelay():
 
 
 def getMessages(state, **kwargs):
+  '''
+  Function to get the list of messages. Essentially just a small preprocessing
+  wrapper around sendToServer.
+
+  Args:
+    state: State(), the state of pmail.
+
+  Returns:
+    List of messages.
+  '''
   returnCount = kwargs.get('returnCount', False)
   afterAction = kwargs.get('afterAction', None)
   data = {'action': 'GET_MESSAGES',
@@ -1772,7 +1690,7 @@ def getMessages(state, **kwargs):
   return sendToServer(data, state.globalLock)
 
 
-def mainLoop(lock,accountSwitcher, eventQue):
+def mainLoop(lock, accountSwitcher, eventQue):
   '''
   Main loop of the program. This loop processes the state
   based on its 'action' and launches various subloops.
@@ -1786,7 +1704,7 @@ def mainLoop(lock,accountSwitcher, eventQue):
     try:
       # Run inner loop and update the state when it exits.
       state = curses.wrapper(
-        lambda x: drawMessages(x, state, accountSwitcher, eventQue))
+          lambda x: drawMessages(x, state, accountSwitcher, eventQue))
       if type(state.action).__name__ == 'Quit':
         break
       else:
@@ -1799,8 +1717,20 @@ def mainLoop(lock,accountSwitcher, eventQue):
       logger.exception('Something bad happened.')
       sys.exit()
 
+
 def checkForNewMessages(lock, eventQue):
-  data = {'action':'CHECK_FOR_NEW_MESSAGES',
+  '''
+  Function to ask the server if new messages have arrived.
+
+  Args:
+    lock: threading.Lock()
+    eventQue: Queue() in which to put an event if new messages did arrive.
+
+  Returns:
+    None
+  TODO: Make this listen to the server (implement this as a server?)
+  '''
+  data = {'action': 'CHECK_FOR_NEW_MESSAGES',
           }
   logger.info('Asking server if anything new showed up.')
   while 1:
@@ -1816,7 +1746,12 @@ def checkForNewMessages(lock, eventQue):
       logger.warning('Could not connect to the server.')
       sys.exit()
 
+
 def checkPrograms():
+  '''
+  Before staring the client check that the editor, pager and picker programs
+  are present and give a friendly warning if not.
+  '''
   progs = {}
   progs['editor'] = config.editor.split()[0]
   progs['pager'] = config.pager.split()[0]
@@ -1829,23 +1764,33 @@ def checkPrograms():
                    ' or the file chooser.'
 
   def askToContinue(prog, msg):
+    '''
+    Give a friendly warning, and ask if client should launch anyway.
+
+    Args:
+      prog: Which program was missing.
+      msg: Message to display.
+    '''
 
     def _askToContinue(stdscr):
+      '''
+      Helper function for curses.
+      '''
       height, width = stdscr.getmaxyx()
-      if height < 4: 
+      if height < 4:
         logger.warning('Terminal too small to continue!')
         sys.exit()
       else:
         lines = []
         lines.append(f'You do not seem to have {progs[prog]} installed and ' +
-                      'available in your $PATH.')
+                     'available in your $PATH.')
         lines.append(msg)
-        lines.append(f'You can try modifying the {prog} setting in ' + 
+        lines.append(f'You can try modifying the {prog} setting in ' +
                      f'config.yaml, or installing {progs[prog]}.')
         lines.append("Press 'y' to ignore this message and continue, and " +
                      "'q' to exit.")
-        for i,l in enumerate(lines):
-          stdscr.addstr(i,0,l[:width - 1]) 
+        for i, l in enumerate(lines):
+          stdscr.addstr(i, 0, l[:width - 1])
         k = 0
         while 1:
           if k == ord('y'):
@@ -1860,25 +1805,30 @@ def checkPrograms():
 
   for k in progs:
     if not which(progs[k]):
-      askToContinue(k,msgs[k])
+      askToContinue(k, msgs[k])
+
 
 def start():
+  '''
+  Start the client.
+  '''
   checkPrograms()
   setEscDelay()
   accountSwitcher = cycle(config.listAccounts())
   logger.setLevel(config.logLevel)
   lock = Lock()
   eventQue = Queue()
-  t1 = Thread(target=mainLoop,args=(lock,accountSwitcher,eventQue,))
-  t2 = Thread(target=checkForNewMessages,args=(lock,eventQue,),
+  t1 = Thread(target=mainLoop, args=(lock, accountSwitcher, eventQue,))
+  t2 = Thread(target=checkForNewMessages, args=(lock, eventQue,),
               daemon=True)
   t1.start()
   t2.start()
-  
+
   # Clean up tmp files.
   for f in os.listdir(config.tmpDir):
     os.remove(os.path.join(config.tmpDir, f))
 # <---
+
 
 """
 vim:foldmethod=marker foldmarker=--->,<---

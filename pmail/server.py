@@ -13,8 +13,8 @@ import argparse
 
 from apiclient import errors
 from pmail.common import (mkService, Session, Labels, MessageInfo,
-                    listMessagesMatchingQuery, logger,
-                    UserInfo, AddressBook, config)
+                          listMessagesMatchingQuery, logger,
+                          UserInfo, AddressBook, config)
 from pmail.subscriber import subscribe
 from googleapiclient.http import BatchHttpRequest
 from threading import Thread, Lock, Event
@@ -26,45 +26,40 @@ from queue import Queue, Empty
 # ---> DB update and synchronisation
 
 
-# ---> Pickling
+# ---> last History
 
 def storeLastHistoryId(account, session, lastMessageId=None, lastHistoryId=None):
   '''
-  Pickle the last historyId for use when updating the db.
+  Store the last historyId as part of UserInfo, for use when updating the db.
 
   Args:
-    account: Account whose history we are pickling.
+    session: db session.
+    account: Account whose history we are storing.
     lastMessageId = The id of the last message saved in the db.
     lastHistoryId = The lastHistoryId.
 
   Returns:
     None
   '''
-  # logger.info('Storing last historyId: {}'.format(lastHistoryId))
-  # path = os.path.join(config.pickleDir, 'lastHistoryId.' + account + '.pickle')
   if lastMessageId:
     lastHistoryId = session.query(MessageInfo).get(lastMessageId).historyId
     q = session.query(UserInfo).get(account)
     q.historyId = lastHistoryId
     session.commit()
-    # with open(path, 'wb') as f:
-    #   pickle.dump(q.historyId, f)
   elif lastHistoryId:
     q = session.query(UserInfo).get(account)
     q.historyId = lastHistoryId
     session.commit()
-    # with open(path, 'wb') as f:
-    #   pickle.dump(lastHistoryId, f)
 
 
 def getLastHistoryId(account, session):
   '''
   Get the last history for account from the pickle if it exists.
+  Args:
+    session: db session.
+  Returns:
+    The last history id.
   '''
-  # path = os.path.join(config.pickleDir, 'lastHistoryId.' + account + '.pickle')
-  # if os.path.exists(path):
-  #   with open(path, 'rb') as f:
-  #     return pickle.load(f)
   return session.query(UserInfo).get(account).historyId
 
 
@@ -148,32 +143,28 @@ def updateDb(account, session, service, newMessagesArrived, lastHistoryId=None):
                           change['labelsRemoved']]
 
     MessageInfo.addMessages(session, account, service(account), messagesAdded)
+
     if len(messagesAdded) > 0:
       # Set newMessagesArrived to be true, this will cause the Cache
       # (savedQuery) to be updated.
       logger.info('There are new messages!')
       newMessagesArrived.set()
+
       if config.afterUnreadChange:
         os.system(config.afterUnreadChange)
-      # os.system('polybar-msg hook email-ipc 1')
 
     MessageInfo.removeMessages(session, messagesDeleted)
     Labels.addLabels(session, labelsAdded)
     Labels.removeLabels(session, labelsRemoved)
-    # try:
+
     if len(changes) > 0:
       lastHistoryId = str(max([int(change['id']) for change in changes]))
-      # logger.info('Last history id: {}'.format(lastHistoryId))
     else:
-    # except Exception:
-      # logger.debug(e)
       lastHistoryId = None
     lastMessageId = None
-  # storeLastHistoryId(account, session, lastMessageId=lastMessageId,
-  #                    lastHistoryId=lastHistoryId)
+
   if lastMessageId:
     lastHistoryId = session.query(MessageInfo).get(lastMessageId).historyId
-    # logger.info('lastHistoryId: {}'.format(lastHistoryId))
   return lastHistoryId
 
 # <---
@@ -226,16 +217,39 @@ def getMessages(s, Q, newMessagesArrived, account, query, position,
 
 
 class SaveQuery():
+  '''
+  Class which acts as a cache so that the db does not need to be queried
+  unnessessairly. The main reason this is needed is to ensure that scolling
+  remains smooth, untested with really large numbers of messages (>6000). If
+  the number of messages gets too large this might need refinements.
+  '''
 
   def __init__(self):
     self.account = None
     self.query = None
     self.includedLabels = None
     self.excludedLabels = None
+    # self.savedQuery: List of messages mathing query - i.e. the evaluated
+    # query.
     self.savedQuery = None
 
-  def getQuery(self, s, account, query, includedLabels, excludedLabels, refresh=False):
-    # Also deletes, new mails, mark as read, etc..
+  def getQuery(self, s, account, query, includedLabels,
+               excludedLabels, refresh=False):
+    '''
+    Method to getQuery, checks if any of the parameters has changed, if not
+    then it just uses the cached query, if something changed then we ask the
+    db.
+    Args:
+      s: db session.
+      account: The account which we need to get a query for.
+      query: This is a db query, possibly resulting from doing a search.
+      includedLabels: List consisting of lables to include.
+      excludedLabels: List consisting of labels to exclude.
+      refresh: If true then we ask the db no matter what, this is incase new
+      messages showed up or messages got deleted etc...
+    Returns:
+      List of messages mathcing query.
+    '''
     # logger.info("read :{}.".format(read))
     if (self.account == account and
         str(self.query) == str(query) and
@@ -266,10 +280,18 @@ class SaveQuery():
       return self.savedQuery
 
   def removeMessages(self, messageIds):
+    '''
+    Method to remove messages from the cache.
+    Args:
+      messageIds: List of messageIds which we should remove.
+    Returns:
+      New list of messages.
+    '''
     self.savedQuery = [m for m in self.savedQuery if m.messageId not in
                        messageIds]
     return self.savedQuery
 
+  '''
   # This didn't work - probably remove it later
   def markAsRead(self, messageIds):
     logger.info('Marking as read.')
@@ -284,40 +306,7 @@ class SaveQuery():
       newSavedQuery.append(m)
     self.savedQuery = newSavedQuery
     return self.savedQuery
-
-
-'''
-def getNextMessage(s, account, query, lastTime, excludedLabels=[],
-                includedLabels=[]):
-  Get a list of messages to display.
-
-  Args:
-    account: The currently selected account.
-    query: list of messageIds.
-    position: The position of the currently highlighted message.
-    height: The height of the stdscr.
-    excludedLabels: Any labels to exclude,
-    includedLabels: Any labels to include.
-    count: if True then only return the count.
-
-  Returns:
-    Either a list of MessageInfo objects or
-    an integer (depending on truthiness of count).
-  excludeQuery = s.query(Labels.messageId).filter(
-      Labels.label.in_(excludedLabels))
-  includeQuery = s.query(Labels.messageId).filter(
-      Labels.label.in_(includedLabels))
-  q = s.query(MessageInfo)\
-      .filter(
-          MessageInfo.messageId.in_(query),
-          MessageInfo.emailAddress == account,
-          ~MessageInfo.messageId.in_(excludeQuery),
-          MessageInfo.messageId.in_(includeQuery))\
-      .filter(MessageInfo.time < lastTime)\
-      .order_by(MessageInfo.time.desc())
-  return q.first() 
-
-'''
+  '''
 
 # <---
 
@@ -325,7 +314,15 @@ def getNextMessage(s, account, query, lastTime, excludedLabels=[],
 
 
 def pmailServer(lock, newMessagesArrived, Q):
-    # get the hostname
+  '''
+  Function which gets run by the server thread.
+  Args:
+    lock: threading.Lock()
+    newMessagesArrived: threading.Event()
+    Q: SaveQuery()
+  Returns:
+    None
+  '''
   host = socket.gethostname()
   port = config.port
   bufferSize = 1024
@@ -341,7 +338,7 @@ def pmailServer(lock, newMessagesArrived, Q):
     except OSError as e:
       logger.info(e)
       logger.warning('Port {} busy. Checking port again in 30s.'
-                  .format(config.port))
+                     .format(config.port))
       sleep(30)
 
   s = Session()
@@ -456,6 +453,7 @@ def pmailServer(lock, newMessagesArrived, Q):
     print('closing connection..')
     conn.close()
 
+
 '''
 def syncDb(lock, newMessagesArrived):
   s = Session()
@@ -488,7 +486,7 @@ def syncDb(lock, newMessagesArrived):
       s.close()
     except Exception:
       logger.exception('Unable to update DB, trying again soon.')
-    #TODO: this doesn't work as expected.
+    # TODO: this doesn't work as expected.
     except KeyboardInterrupt as k:
       print("Bye!")
       logger.info(k)
@@ -496,16 +494,39 @@ def syncDb(lock, newMessagesArrived):
     sleep(config.updateFreq)
 '''
 
+
 class ClearableQueue(Queue):
+  '''
+  Add an extra clear method to Queue, because we will want to empty it put
+  after retriving something, incase a lot of items built up.
 
-    def clear(self):
-        try:
-            while True:
-                self.get_nowait()
-        except Empty:
-            pass
+  '''
 
-def _syncDb_pubsub(session,pubSubQue,newMessagesArrived, lock, futures):
+  def clear(self):
+    try:
+      while True:
+        self.get_nowait()
+    except Empty:
+      pass
+
+
+def _syncDb_pubsub(session, pubSubQue, newMessagesArrived, lock, futures):
+  '''
+  Function which gets called by the syncer if update_policy is set to
+  'pubsub'.
+  Args:
+    session: db session.
+    pubSubQue: ClearableQueue
+    account: Account which is being synched.
+    newMessagesArrived: threading.Event()
+    futures: a dictonary of
+    google.cloud.pubsub_v1.subscriber.StreamingPullFuture objects,
+    one corresponding to each account.
+  Returns:
+    futures: a dictonary of
+    google.cloud.pubsub_v1.subscriber.StreamingPull objects,
+    one corresponding to each account.
+  '''
   for account in config.listAccounts():
     # Check watch request has not expired.
     ui = session.query(UserInfo).get(account)
@@ -524,7 +545,7 @@ def _syncDb_pubsub(session,pubSubQue,newMessagesArrived, lock, futures):
       request = {
           'labelIds': ['INBOX'],
           'topicName': 'projects/{}/topics/pmail'.format(
-            config.accounts[account]['project_id']
+              config.accounts[account]['project_id']
           )}
       response = service.users().watch(userId='me', body=request).execute()
       ui.watchExpirey = response['expiration']
@@ -535,7 +556,7 @@ def _syncDb_pubsub(session,pubSubQue,newMessagesArrived, lock, futures):
     # Subscribe to pubsub topic.
     if not futures[account] or not futures[account].running():
       logger.info('Subscribing to pubsub topic for: {}'.format(account))
-      futures[account] = subscribe(pubSubQue,account)
+      futures[account] = subscribe(pubSubQue, account)
 
   try:
     # Blocks until something is in the queue to get or timeout is reached.
@@ -558,7 +579,18 @@ def _syncDb_pubsub(session,pubSubQue,newMessagesArrived, lock, futures):
   except Exception:
     logger.exception('Error while getting something from the pubsub queue.')
 
-def _syncDb_freq(session,newMessagesArrived, lock):
+
+def _syncDb_freq(session, newMessagesArrived, lock):
+  '''
+  Function which gets called by the sync thread if update_policy is set to
+  frequency.
+  Args:
+    session: db session.
+    account: Account which is being synched.
+    newMessagesArrived: threading.Event()
+  Returns:
+    None
+  '''
   for account in config.listAccounts():
     # Check user info exists.
     ui = session.query(UserInfo).get(account)
@@ -581,6 +613,15 @@ def _syncDb_freq(session,newMessagesArrived, lock):
 
 
 def __syncDb(session, account, newMessagesArrived):
+  '''
+  Function which actually perfroms the sync, inner most function of the loop.
+  Args:
+    session: db session.
+    account: Account which is being synched.
+    newMessagesArrived: threading.Event()
+  Returns:
+    None
+  '''
   ui = session.query(UserInfo).get(account)
   if ui.shouldIupdate == False:
     lastHistoryId = updateDb(account, session, mkService,
@@ -599,7 +640,17 @@ def __syncDb(session, account, newMessagesArrived):
       pickle.dump(False, f)
   session.close()
 
+
 def syncDb(lock, newMessagesArrived):
+  '''
+  Function to keep local db in sync with remote db (gmail).
+  Args:
+    lock: threading.Lock() object, to prevent race conditions on local db.
+    newMessagesArrived: threading.Event() object, so that the server can be 
+    notified when the syncher detects something new.
+  Returns:
+    None
+  '''
   s = Session()
   pubSubQue = ClearableQueue()
   futures = {}
@@ -608,13 +659,14 @@ def syncDb(lock, newMessagesArrived):
   while 1:
     try:
       if config.updatePolicy == 'pubsub':
-        futures = _syncDb_pubsub(s,pubSubQue,newMessagesArrived,lock,futures)
+        futures = _syncDb_pubsub(
+            s, pubSubQue, newMessagesArrived, lock, futures)
       elif config.updatePolicy == 'frequency':
-        _syncDb_freq(s,newMessagesArrived,lock)
+        _syncDb_freq(s, newMessagesArrived, lock)
       else:
         print('Error, update_policy seems incorrectly configured.')
         sys.exit()
-    #TODO: this doesn't work as expected.
+    # TODO: this doesn't work as expected.
     except KeyboardInterrupt as k:
       print("Bye!")
       logger.info(k)
@@ -625,6 +677,9 @@ def syncDb(lock, newMessagesArrived):
 
 # if __name__ == '__main__':
 def start():
+  '''
+  Start both the server thread and a thread which will update the local db.
+  '''
   logger.setLevel(config.logLevel)
   # Uncomment this for sql logs
   # logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
@@ -638,7 +693,18 @@ def start():
   t1.start()
   t2.start()
 
+
 def checkForNewMessages(id):
+  '''
+  Function to be run by external programs to check if there are unread
+  messages.
+
+  Args:
+    id: this is the short id of the account as set in the accounts setting of
+    the config file.
+  Returns:
+    The number of unread messages for the account corresponding to id.
+  '''
   s = Session()
   for k in config.listAccounts():
     if config.accounts[k]['id'] == id:
@@ -648,6 +714,7 @@ def checkForNewMessages(id):
   return numOfUnreadMessages
 
 # <---
+
 
 """
 vim:foldmethod=marker foldmarker=--->,<---
