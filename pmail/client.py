@@ -10,23 +10,24 @@ import sys
 import pickle
 import re
 import socket
-import logging
+# import logging
 
-from apiclient import errors
-from pmail.common import (mkService, Labels, MessageInfo, Attachments,
+# from apiclient import errors
+from pmail.common import (mkService, MessageInfo, Attachments,
                           listMessagesMatchingQuery, logger,
-                          UserInfo, AddressBook, config)
-from itertools import cycle
+                          AddressBook, config)
+# from itertools import cycle
 from pmail.sendmail import (sendMessage, mkSubject, mkTo, createMessage)
 from subprocess import run, PIPE, Popen
 from threading import Thread, Event, Lock
 from uuid import uuid4
-from time import sleep, process_time
+from time import sleep
 from queue import Queue
 from shutil import which
 # <---
 
 # ---> State
+
 
 class State():
   '''
@@ -258,7 +259,7 @@ class State():
 
     account = ' {} {} {} '.format(
         seperator,
-        self.account,
+        self.account if self.account else selectedMessage.emailAddress,
         seperator)
     acLen = len(account) + lUser
 
@@ -323,9 +324,10 @@ class State():
 
 # <---
 
-#<---
+# <---
 
 # ---> Actions
+
 
 ACTIONS = {
     'READ_A_MAIL',
@@ -339,6 +341,7 @@ ACTIONS = {
     'DELETE',
     'DO_NOT_SEND',
 }
+
 
 class Action():
   '''
@@ -354,6 +357,7 @@ class Read(Action):
   '''
   Class to read an email.
   '''
+
   def __init__(self, messageId, message):
     self.messageId = messageId
     self.message = message
@@ -409,7 +413,7 @@ class Modify(Action):
       sendToServer(data, lock)
 
     t = Thread(target=postDelete, name='DELETE',
-               args=(state, mkService, [m.messageId for m in ms]))
+               args=(state, mkService, ms))  # [m.messageId for m in ms]))
     t.start()
 
 
@@ -417,6 +421,7 @@ class Send(Action):
   '''
   Class to send an email.
   '''
+
   def __init__(self, **kwargs):
     self.messageInfo = kwargs.get('messageInfo', None)
     self.message = kwargs.get('message', None)
@@ -434,16 +439,18 @@ class Send(Action):
     if self.type == 'NEW':
       draftId = str(uuid4())
       messageInfo = None
+      # account = chooseAccount()
       input = None
 
     elif self.type in ['REPLY', 'FORWARD', 'REPLY_TO_ALL']:
       messageInfo = self.messageInfo
+      account = state.account if state.account else messageInfo.emailAddress
       message, draftId = self.message, messageInfo.messageId
 
       self.subject = mkSubject(messageInfo, self.type)
 
       if self.type in ['REPLY', 'REPLY_TO_ALL']:
-        self.sendTo = mkTo(state.account, messageInfo, self.type)
+        self.sendTo = mkTo(account, messageInfo, self.type)
       # elif self.type in ['FORWARD']:
         # logger.info('self.sendTo = {}'.format(self.sendTo))
 
@@ -463,18 +470,17 @@ class Send(Action):
 
     # Check that tmp file exists ready to be sent.
     if os.path.exists(os.path.join(config.tmpDir, draftId)):
-      type = self.type if self.type in [
-          'NEW', 'FORWARD'] else 'REPLY'
+      type = self.type if self.type in ['NEW', 'FORWARD'] else 'REPLY'
 
       # Run confirmation loop.
-      self.confirm(state.account)
+      self.confirm(account)
 
       # Make the thread.
       if self.send == 'SEND':
         finishedUpdatingLocalDb = Event()
         t = Thread(target=postSend, name="postSend",
                    args=(mkService, finishedUpdatingLocalDb,
-                         state.account, draftId),
+                         account, draftId),
                    kwargs={'type': type,
                            'attachments': self.attachments,
                            'to': self.sendTo,
@@ -496,6 +502,7 @@ class ViewAttachments(Action):
   '''
   Class to view attachements.
   '''
+
   def __init__(self, attachments):
     self.attachments = attachments
     Action.__init__(self, 'VIEW_ATTACHMENTS')
@@ -510,8 +517,9 @@ class Quit(Action):
   '''
   Class to quit.
   '''
+
   def __init__(self):
-    #This is the only place where the underlying Action class is used.
+    # This is the only place where the underlying Action class is used.
     Action.__init__(self, 'QUIT')
 
   def perform(self):
@@ -574,7 +582,7 @@ def getInput(stdscr, prompt, height, width):
     k = stdscr.getkey()
     if (k == 'KEY_BACKSPACE'):
       try:
-        address = address[:l-1]
+        address = address[:l - 1]
       except IndexError:
         pass
     elif (len(k) == 1) and (k != '\t'):
@@ -745,7 +753,7 @@ def drawConfirmationScreen(stdscr, account, sendAction):
 
     # listAttachments(attachments)
     for i, a in enumerate(attachments):
-      stdscr.addstr(c+i, 3, ('- ' + a)[:width - 4])
+      stdscr.addstr(c + i, 3, ('- ' + a)[:width - 4])
 
     stdscr.addstr(c + l, 1, ("Options:")[:width - 2])
 
@@ -812,7 +820,7 @@ def drawAttachments(stdscr, account, state, attachments):
       return state
 
     cursor_y = max(0, cursor_y)
-    cursor_y = min(height-3, cursor_y, numOfAttachments - 1)
+    cursor_y = min(height - 3, cursor_y, numOfAttachments - 1)
     # Update selected header.
     selectedAttachment = attachments[cursor_y]
 
@@ -942,7 +950,7 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
       messages = getMessages(state, returnCount=False)
 
     elif k == ord('M'):
-      state.cursor_y = (height - 2)//2
+      state.cursor_y = (height - 2) // 2
 
     elif k == ord('H'):
       state.cursor_y = 0
@@ -952,7 +960,9 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     elif k == ord('\n'):
       # Read a message.
-      message = readMessage(mkService(state.account),
+      account = state.account if state.account else\
+          selectedMessage.emailAddress
+      message = readMessage(mkService(account),
                             selectedMessage.messageId)
       state.selectedMessages = [selectedMessage]
       state.read(selectedMessage.messageId, message)
@@ -960,7 +970,9 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     elif k == ord('r'):
       # Reply to message.
-      message = readMessage(mkService(state.account),
+      account = state.account if state.account else\
+          selectedMessage.emailAddress
+      message = readMessage(mkService(account),
                             selectedMessage.messageId)
       state.reply(selectedMessage, message)
       stdscr.addstr(height - 1, 0, ' ' * (width - 1))
@@ -969,9 +981,11 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     elif k == ord('f'):
       # Forward message.
-      to = chooseAddress(state.account)
+      account = state.account if state.account else\
+          selectedMessage.emailAddress
+      to = chooseAddress(account)
       if to:
-        message = readMessage(mkService(state.account),
+        message = readMessage(mkService(account),
                               selectedMessage.messageId)
         state.forward(selectedMessage, message, to)
         stdscr.addstr(height - 1, 0, ' ' * (width - 1))
@@ -980,7 +994,9 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     elif k == ord('a'):
       # Reply to group/all.
-      message = readMessage(mkService(state.account),
+      account = state.account if state.account else\
+          selectedMessage.emailAddress
+      message = readMessage(mkService(account),
                             selectedMessage.messageId)
       state.replyToAll(selectedMessage, message)
       stdscr.addstr(height - 1, 0, ' ' * (width - 1))
@@ -989,6 +1005,7 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     elif k == ord('m'):
       # Make a new message.
+      # account = chooseAddress()
       to = chooseAddress(state.account)
       stdscr.clear()
       stdscr.refresh()
@@ -1092,9 +1109,25 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     elif k == ord('\t'):
       # Toggle between accounts.
-      state.switchAccount(next(accountSwitcher))
+      state.switchAccount(accountSwitcher.next())
       messages = getMessages(state, returnCount=False)
       numOfMessages = getMessages(state, returnCount=True)
+
+    elif k == ord('b'):
+      # Switch between accounts by index.
+      k = stdscr.getch()
+      for i in range(1, 10):
+        if k == ord(str(i)):
+          account = accountSwitcher.switch(i - 1)
+          if account:
+            state.switchAccount(account)
+            messages = getMessages(state, returnCount=False)
+            numOfMessages = getMessages(state, returnCount=True)
+      if k == ord('u'):
+        # Unified mailbox
+        state.switchAccount(None)
+        messages = getMessages(state, returnCount=False)
+        numOfMessages = getMessages(state, returnCount=True)
 
     elif k == ord('q'):
       # Quit.
@@ -1112,7 +1145,7 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
     else:
       # Update line number.
       state.cursor_y = max(0, state.cursor_y)
-      state.cursor_y = min(height-3, state.cursor_y, numOfMessages - 1)
+      state.cursor_y = min(height - 3, state.cursor_y, numOfMessages - 1)
       # Update selected message.
       try:
         selectedMessage = messages[state.cursor_y]
@@ -1161,7 +1194,9 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     state.mkStatusBar(stdscr, height, width, numOfMessages, selectedMessage)
 
-    if state.action and state.action.action == 'VIEW_ATTACHMENTS' and state.action.saved == 'SAVED_ATTACHMENT':
+    if (state.action and
+        state.action.action == 'VIEW_ATTACHMENTS' and
+            state.action.saved == 'SAVED_ATTACHMENT'):
       # if state['action'] == 'SAVED_ATTACHMENT':
       putMessage(stdscr, height, width, "Attachment saved successfully.")
       state.action = None
@@ -1212,39 +1247,49 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 # ---> Postprocessing
 
 
-def postDelete(state, service, messageIds):
+def postDelete(state, service, messages):
   '''
   Modify labels on remote db after deleting.
 
   Args:
     state: The state of the program.
     service: The google API sevice object.
-    messagedIds: List of message ids which were
+    messages: List of messageInfo objects which were
     deleted.
 
   Returns:
     None
   '''
   # Remove unread label from Google servers.
+  def _postDelete(action, account, service, messageIds):
+    if action.type == 'DELETE':
+      body = {'ids': messageIds,
+              'removeLabelIds': ['UNREAD'],
+              'addLabelIds': ['TRASH']}
+    elif action.type == 'MARK_AS_READ':
+      body = {'ids': messageIds,
+              'removeLabelIds': ['UNREAD'],
+              'addLabelIds': []}
+    elif action.type == 'TRASH':
+      body = {'ids': messageIds,
+              'removeLabelIds': [],
+              'addLabelIds': ['TRASH']}
+    try:
+      service(account).users().messages().batchModify(
+          userId='me', body=body).execute()
+    except Exception:
+      logger.exception(
+          'Something went wrong trying to delete from remote server.'
+      )
+
   logger.info('Modify labels in remote DB: + "TRASH", - "UNREAD".')
-  if state.action.type == 'DELETE':
-    body = {'ids': messageIds,
-            'removeLabelIds': ['UNREAD'],
-            'addLabelIds': ['TRASH']}
-  elif state.action.type == 'MARK_AS_READ':
-    body = {'ids': messageIds,
-            'removeLabelIds': ['UNREAD'],
-            'addLabelIds': []}
-  elif state.action.type == 'TRASH':
-    body = {'ids': messageIds,
-            'removeLabelIds': [],
-            'addLabelIds': ['TRASH']}
-  account = state.account
-  try:
-    service(account).users().messages().batchModify(
-        userId='me', body=body).execute()
-  except Exception:
-    logger.exception('Something went wrong trying to delete on remote server.')
+  if state.account:
+    account = state.account
+    messageIds = [m.messageId for m in messages]
+    _postDelete(state.action, account, service, messageIds)
+  else:
+    for account in config.listAccounts():
+      messageIds = [m.messageId for m in messages if m.emailAddress == account]
 
 
 def postSend(service, event, account, draftId, **kwargs):
@@ -1311,7 +1356,8 @@ def postRead(service, state):
   '''
   # Mark message as read.
   # Remove 'UNREAD' label from local storage.
-  account = state.account
+  account = state.account if state.account else\
+      state.selectedMessages[0].emailAddress
   messageId = state.selectedMessages[0].messageId
   lock = state.globalLock
   data = {'action': 'REMOVE_LABELS',
@@ -1633,11 +1679,11 @@ def sendToServer(data, lock):
       sock.connect((host, port))
       pickledData = pickle.dumps(data)
       sizeOfPickle = len(pickledData)
-      numOfChunks = sizeOfPickle//bufferSize + 1
+      numOfChunks = sizeOfPickle // bufferSize + 1
       sock.send(sizeOfPickle.to_bytes(4, 'big'))
 
       for i in range(numOfChunks):
-        sock.send(pickledData[i*bufferSize: (i+1)*bufferSize])
+        sock.send(pickledData[i * bufferSize: (i + 1) * bufferSize])
 
       sizeOfResponse = int.from_bytes(sock.recv(4), 'big')
       response = b''
@@ -1696,7 +1742,8 @@ def mainLoop(lock, accountSwitcher, eventQue):
   based on its 'action' and launches various subloops.
   '''
   logger.info('Starting main loop...')
-  account = next(accountSwitcher)
+  # account = next(accountSwitcher)
+  account = accountSwitcher.next()
   # Initialise the state.
   state = State(account=account,
                 lock=lock)
@@ -1808,13 +1855,35 @@ def checkPrograms():
       askToContinue(k, msgs[k])
 
 
+class AccountSwitcher():
+  def __init__(self, accounts):
+    self.accounts = list(accounts)
+    self.numAccounts = len(accounts)
+    self.account = self.accounts[0]
+
+  def next(self):
+    i = self.accounts.index(self.account)
+    i = (i + 1) % self.numAccounts
+    self.account = self.accounts[i]
+    return self.account
+
+  def switch(self, accountIndex):
+    if accountIndex < self.numAccounts:
+      self.account = self.accounts[accountIndex]
+      return self.account
+    else:
+      logger.info('Tried to switch to account {}. But it does not exist!'
+                  .format(accountIndex))
+
+
 def start():
   '''
   Start the client.
   '''
   checkPrograms()
   setEscDelay()
-  accountSwitcher = cycle(config.listAccounts())
+  # accountSwitcher = cycle(config.listAccounts())
+  accountSwitcher = AccountSwitcher(config.listAccounts())
   logger.setLevel(config.logLevel)
   lock = Lock()
   eventQue = Queue()

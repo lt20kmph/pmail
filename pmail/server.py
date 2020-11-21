@@ -8,15 +8,15 @@ import os.path
 import os
 import sys
 import socket
-import logging
-import argparse
+# import logging
+# import argparse
 
-from apiclient import errors
+# from apiclient import errors
 from pmail.common import (mkService, Session, Labels, MessageInfo,
                           listMessagesMatchingQuery, logger,
-                          UserInfo, AddressBook, config)
+                          UserInfo, config)
 from pmail.subscriber import subscribe
-from googleapiclient.http import BatchHttpRequest
+# from googleapiclient.http import BatchHttpRequest
 from threading import Thread, Lock, Event
 from time import sleep, time
 from queue import Queue, Empty
@@ -196,7 +196,7 @@ def getMessages(s, Q, newMessagesArrived, account, query, position,
     q = Q.getQuery(s, account, query, includedLabels,
                    excludedLabels, refresh=True)
     newMessagesArrived.clear()
-  elif afterAction == None:
+  elif afterAction is None:
     q = Q.getQuery(s, account, query, includedLabels, excludedLabels)
   elif afterAction['action'] in ['DELETE', 'TRASH']:
     logger.info('Removing message: {} from cache.'
@@ -208,10 +208,10 @@ def getMessages(s, Q, newMessagesArrived, account, query, position,
     # q = Q.markAsRead(afterAction['messageIds'])
     q = Q.getQuery(s, account, query, includedLabels,
                    excludedLabels, refresh=True)
-  if count == False:
+  if count is False:
     # return [h for h in q.slice(position, position + height - 2)]
     return q[position:position + height - 2]
-  elif count == True:
+  elif count is True:
     # return q.count()
     return len(q)
 
@@ -263,13 +263,21 @@ class SaveQuery():
       includeQuery = s.query(Labels.messageId).filter(
           Labels.label.in_(includedLabels))
       # logger.info('Made two queries.')
-      q = s.query(MessageInfo)\
-          .filter(
-              MessageInfo.messageId.in_(query),
-              MessageInfo.emailAddress == account,
-              ~MessageInfo.messageId.in_(excludeQuery),
-              MessageInfo.messageId.in_(includeQuery))\
-          .order_by(MessageInfo.time.desc())
+      if account:
+        q = s.query(MessageInfo)\
+            .filter(
+                MessageInfo.messageId.in_(query),
+                MessageInfo.emailAddress == account,
+                ~MessageInfo.messageId.in_(excludeQuery),
+                MessageInfo.messageId.in_(includeQuery))\
+            .order_by(MessageInfo.time.desc())
+      else:
+        q = s.query(MessageInfo)\
+            .filter(
+                MessageInfo.messageId.in_(query),
+                ~MessageInfo.messageId.in_(excludeQuery),
+                MessageInfo.messageId.in_(includeQuery))\
+            .order_by(MessageInfo.time.desc())
       # logger.info('Successfully(?) refreshed the cache.')
       self.account = account
       self.query = query
