@@ -16,6 +16,7 @@ from pmail.common import (mkService, Session, Labels, MessageInfo,
                           listMessagesMatchingQuery, logger,
                           UserInfo, config)
 from pmail.subscriber import subscribe
+from googleapiclient.errors import HttpError
 # from googleapiclient.http import BatchHttpRequest
 from threading import Thread, Lock, Event
 from time import sleep, time
@@ -547,9 +548,10 @@ def _syncDb_pubsub(session, pubSubQue, newMessagesArrived, lock, futures):
         session.commit()
         logger.info('Created user info for: {}'.format(account))
     if (not ui.watchExpirey) or \
-       (ui.watchExpirey < (int(time()) + 24 * 60 * 60) * 1000):
+       (ui.watchExpirey < (int(time()) - 24 * 60 * 60) * 1000):
       logger.info('Watch does not exist or is about to expire so rewatching.')
       service = mkService(account)
+      service.users().stop(userId='me')
       request = {
           'labelIds': ['INBOX'],
           'topicName': 'projects/{}/topics/pmail'.format(
@@ -568,7 +570,7 @@ def _syncDb_pubsub(session, pubSubQue, newMessagesArrived, lock, futures):
 
   try:
     # Blocks until something is in the queue to get or timeout is reached.
-    m = pubSubQue.get(timeout=60*60*12)
+    m = pubSubQue.get(timeout=60 * 60 * 12)
     # Clear the queue in case multiple messages built up.
     pubSubQue.clear()
     account = json.loads(m.decode('utf-8'))['emailAddress']

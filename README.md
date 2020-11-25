@@ -74,7 +74,8 @@ modules.
 
 ### Setup Gmail API
 
-(Instructions valid as of July 2020.
+(Instructions valid as of July 2020.) You will need to do this step for each
+account you wish to use.
 
 1. Go to the [Quickstart guide][1] and click on the 'Enable the Gmail API
 button.
@@ -82,6 +83,24 @@ button.
 the type of application and finally click the 'Download client configuration
 button at the end.
 3. Save the 'credentials.json' file somewhere safe.
+
+#### Setup Gmail PubSub (optional)
+
+This is an optional step which is only needed if you wish to enable push/pull
+update notifications via GClouds PubSub interface. See [here][7] for detailed
+instructions about how to set this up.
+
+In summary what you need to do is this:
+
+1. Install the pubsub client:
+
+    pip install --upgrade google-cloud-pubsub
+
+2. Create a pubsub topic called `pmail` for the project which is associated
+   with API (if you followed the quickstart guide, this will be called
+   something like `quickstart-xxxxxxxxxxxxx`) 
+3. Create a subscription alled `pmail-update`, set the delivey type to `pull`.
+4. Grant publish privileges to `gmail-api-push@system.gserviceaccount.com`.
 
 ### Install Pmail
 
@@ -164,6 +183,8 @@ The following key bindings are available.
     c - Clear search filter
     SPACE - Select email (can be used to select multiple emails)
     TAB - Switch between accounts if you have more than one configured
+    b[n] - Switch to nth mailbox, for n in [1,..,9]
+    bu - Start unified mailbox mode
     gg - Go to top of message list
     G - Go to bottom of message list
     CTRL U - Scroll up one page
@@ -240,3 +261,4 @@ attempt to run the client/server over any network you do not completely trust
 [5]: https://github.com/junegunn/fzf
 [6]: http://www.mutt.org/
 [screenshot]: https://raw.githubusercontent.com/lt20kmph/pmail/master/scrot.png "Screenshot"
+[7]: https://developers.google.com/gmail/api/guides/push 

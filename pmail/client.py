@@ -280,10 +280,11 @@ class State():
         numOfMessages)
     n = len(numOfMessagesString)
 
-    if self.showLabels == True:
+    if self.showLabels is True:
       labels = str(selectedMessage.showLabels())
     else:
       labels = ''
+    labels = labels[: width - mbLen - acLen - stLen - n - 1]
     labelsLen = len(labels)
 
     whitespace = ' {}'.format(
@@ -440,6 +441,7 @@ class Send(Action):
       draftId = str(uuid4())
       messageInfo = None
       # account = chooseAccount()
+      account = state.account if state.account else state.unifiedAccount
       input = None
 
     elif self.type in ['REPLY', 'FORWARD', 'REPLY_TO_ALL']:
@@ -1005,8 +1007,9 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
 
     elif k == ord('m'):
       # Make a new message.
-      # account = chooseAddress()
-      to = chooseAddress(state.account)
+      account = state.account if state.account else chooseAccount()
+      state.unifiedAccount = account
+      to = chooseAddress(account)
       stdscr.clear()
       stdscr.refresh()
       if to:
@@ -1290,6 +1293,7 @@ def postDelete(state, service, messages):
   else:
     for account in config.listAccounts():
       messageIds = [m.messageId for m in messages if m.emailAddress == account]
+      _postDelete(state.action, account, service, messageIds)
 
 
 def postSend(service, event, account, draftId, **kwargs):
@@ -1606,6 +1610,10 @@ def fzfWrapper (stdscr, prompt, iterable):
   stdscr.refresh()
   return out
 '''
+
+def chooseAccount(): return fzf(
+  'Send from: ', list(config.listAccounts())
+)
 
 
 def fzf(prompt, iterable):
