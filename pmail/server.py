@@ -452,7 +452,7 @@ def pmailServer(lock, newMessagesArrived, Q):
       elif action == 'GET_LABEL_MAP':
         # Get the labelMap - this feels a bit hacky...
         labelMap = LabelInfo.getName(s)
-        logger.info(labelMap)
+        # logger.info(labelMap)
         response = labelMap
 
     pickledResponse = pickle.dumps(response)

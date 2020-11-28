@@ -179,8 +179,10 @@ class State():
     '''
     Method to view attachements.
     '''
-    attachments = getAttachments(mkService(self.account),
-                                 self.selectedMessages[0], self.globalLock)
+    attachments = getAttachments(
+        mkService(self.selectedMessages[0].emailAddress),
+        self.selectedMessages[0],
+        self.globalLock)
     if attachments:
       self.action = ViewAttachments(attachments)
       return True
@@ -238,7 +240,8 @@ class State():
       logger.warning('Tried to act, but there is no action in the queue.')
 
 # ---> mkStausBar
-  def mkStatusBar(self, stdscr, height, width, numOfMessages, selectedMessage):
+  def mkStatusBar(self, stdscr, height, width, numOfMessages,
+                  selectedMessage, labelMap):
     '''
     Draw the status bar on the screen.
 
@@ -1108,7 +1111,14 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue, labelMap):
       attachments = state.viewAttachments()
       messages = getMessages(state, returnCount=False)
       if attachments:
+        state.selectedMessages = []
         return state
+      else:
+        putMessage(stdscr, height, width,
+                   'There are no attachments for this message. '
+                   'press any key to continue.')
+        k = stdscr.getch()
+        state.selectedMessages = []
 
     elif k == ord('\t'):
       # Toggle between accounts.
@@ -1195,7 +1205,8 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue, labelMap):
         for i in range(numOfMessages, height - 1):
           stdscr.addstr(i, 0, " " * width)
 
-    state.mkStatusBar(stdscr, height, width, numOfMessages, selectedMessage)
+    state.mkStatusBar(stdscr, height, width, numOfMessages, selectedMessage,
+                      labelMap)
 
     if (state.action and
         state.action.action == 'VIEW_ATTACHMENTS' and
@@ -1265,25 +1276,26 @@ def postDelete(state, service, messages):
   '''
   # Remove unread label from Google servers.
   def _postDelete(action, account, service, messageIds):
-    if action.type == 'DELETE':
-      body = {'ids': messageIds,
-              'removeLabelIds': ['UNREAD'],
-              'addLabelIds': ['TRASH']}
-    elif action.type == 'MARK_AS_READ':
-      body = {'ids': messageIds,
-              'removeLabelIds': ['UNREAD'],
-              'addLabelIds': []}
-    elif action.type == 'TRASH':
-      body = {'ids': messageIds,
-              'removeLabelIds': [],
-              'addLabelIds': ['TRASH']}
-    try:
-      service(account).users().messages().batchModify(
-          userId='me', body=body).execute()
-    except Exception:
-      logger.exception(
-          'Something went wrong trying to delete from remote server.'
-      )
+    if len(messageIds) > 0:
+      if action.type == 'DELETE':
+        body = {'ids': messageIds,
+                'removeLabelIds': ['UNREAD'],
+                'addLabelIds': ['TRASH']}
+      elif action.type == 'MARK_AS_READ':
+        body = {'ids': messageIds,
+                'removeLabelIds': ['UNREAD'],
+                'addLabelIds': []}
+      elif action.type == 'TRASH':
+        body = {'ids': messageIds,
+                'removeLabelIds': [],
+                'addLabelIds': ['TRASH']}
+      try:
+        service(account).users().messages().batchModify(
+            userId='me', body=body).execute()
+      except Exception:
+        logger.exception(
+            'Something went wrong trying to delete from remote server.'
+        )
 
   logger.info('Modify labels in remote DB: + "TRASH", - "UNREAD".')
   if state.account:
@@ -1537,16 +1549,7 @@ def getAttachments(service, header, lock):
     except Exception:
       logger.exception('An error occurred while getting attachments.')
   if len(attachments) == 0:
-    # In the future this can probably happen automagically.
-    logger.info('Attempting to remove false positive attachment signal')
-    data = {'action': 'REMOVE_FALSE_ATTACMENTS',
-            'messageId': messageId}
-    sendToServer(data, lock)
-    # q = s.query(MessageInfo).filter(MessageInfo.messageId == messageId)\
-    #     .update({MessageInfo.hasAttachments: False},
-    #             synchronize_session='evaluate')
-    # s.commit()
-    logger.info('Signal removed.')
+    logger.info('Trying to view attachments but there are none')
   else:
     return attachments
 # <---

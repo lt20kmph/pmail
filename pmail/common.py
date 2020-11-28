@@ -516,10 +516,12 @@ class LabelInfo(Base):
   '''
   __tablename__ = 'label_info'
   labelId = Column(String, primary_key=True)
+  labelAccount = Column(String, primary_key=True)
   labelName = Column(String)
 
-  def __init__(self, labelId, labelName):
+  def __init__(self, account, labelId, labelName):
     self.labelId = labelId
+    self.labelAccount = account
     self.labelName = labelName
 
   @classmethod
@@ -536,9 +538,12 @@ class LabelInfo(Base):
     service = mkService(account)
     response = service.users().labels().list(userId='me').execute()['labels']
     for label in response:
-      q = session.query(cls).filter(cls.labelId == label['id']).first()
+      q = session.query(cls)\
+          .filter(cls.labelId == label['id'])\
+          .filter(cls.labelAccount == account)\
+          .first()
       if q is None:
-        labelInfo = cls(label['id'], label['name'])
+        labelInfo = cls(account, label['id'], label['name'])
         session.add(labelInfo)
     # TODO: remove old labels...
     # q = session.query(cls)\
@@ -548,8 +553,11 @@ class LabelInfo(Base):
 
   @classmethod
   def getName(cls, session):
-    q = session.query(cls)
-    return {label.labelId: label.labelName for label in q}
+    labelMap = {}
+    for account in config.listAccounts():
+      q = session.query(cls).filter(cls.labelAccount == account)
+      labelMap[account] = {label.labelId: label.labelName for label in q}
+    return labelMap
 
 
 class Labels(Base):
@@ -676,7 +684,7 @@ class MessageInfo(Base):
     Reurns:
       A formatted string.
     '''
-    if 'UNREAD' in [l.labelId for l in self.labels]:
+    if 'UNREAD' in [label.labelId for label in self.labels]:
       marker = chr(config.unread) + ' '
     else:
       marker = '  '
@@ -696,7 +704,8 @@ class MessageInfo(Base):
     return str
 
   def showLabels(self, labelMap):
-    return [labelMap[label.labelId] for label in self.labels]
+    return [labelMap[self.emailAddress][label.labelId] 
+            for label in self.labels]
 
   def timeForReply(self):
     '''
@@ -749,7 +758,7 @@ class MessageInfo(Base):
         return True
     '''
     labelIds = [label.labelId for label in self.labels]
-    labelNames = [labelMap[label] for label in labelIds]
+    labelNames = [labelMap[self.emailAddress][label] for label in labelIds]
     return 'ATTACHMENT' in labelNames
 
   @classmethod
