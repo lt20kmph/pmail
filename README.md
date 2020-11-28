@@ -82,7 +82,7 @@ button.
 2. Agree to the terms and conditions, select 'Desktop App' if it asks you for
 the type of application and finally click the 'Download client configuration
 button at the end.
-3. Save the 'credentials.json' file somewhere safe.
+3. Save the `credentials.json` file somewhere safe.
 
 #### Setup Gmail PubSub (optional)
 
@@ -95,6 +95,10 @@ In summary what you need to do is this:
 1. Install the pubsub client:
 
     pip install --upgrade google-cloud-pubsub
+
+   You will need to create authentication credentials for the pubsub client,
+   follow the instructions [here][8]. Save the resulting `credentials.json`
+   file somewhere safe.
 
 2. Create a pubsub topic called `pmail` for the project which is associated
    with API (if you followed the quickstart guide, this will be called
@@ -135,6 +139,9 @@ run the following:
 
 You can safely ignore most of the configuration options but you will need to
 fill out your relevant details in the accounts section.
+
+**For the pubsub to work (optional)** you will **need** to fill in the
+relevant settings with the authentication and project name.
 
 Also you might need to change `nvim` to `vim` under `editor` depending on your
 preference.
@@ -262,3 +269,4 @@ attempt to run the client/server over any network you do not completely trust
 [6]: http://www.mutt.org/
 [screenshot]: https://raw.githubusercontent.com/lt20kmph/pmail/master/scrot.png "Screenshot"
 [7]: https://developers.google.com/gmail/api/guides/push 
+[8]: https://cloud.google.com/pubsub/docs/reference/libraries 

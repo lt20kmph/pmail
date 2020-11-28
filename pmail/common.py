@@ -222,7 +222,7 @@ def mkService(account):
 
 def formatSize(num):
   '''
-  Format a filesize in bytes into a human readable 
+  Format a filesize in bytes into a human readable
   one.
   '''
   for unit in ['B', 'K', 'M', 'G', 'T', 'P', 'E', 'Z']:
@@ -242,7 +242,7 @@ def formatSize(num):
 
 def unix2localTime(unix_timestamp):
   '''
-  Convert timestamp to local time and format 
+  Convert timestamp to local time and format
   like e.g. Jun 3
   '''
   utc_time = datetime.fromtimestamp(int(unix_timestamp) // 1000, timezone.utc)
@@ -408,8 +408,8 @@ class UserInfo(Base):
       account: The account to query.
     Returns: An integer.
     '''
-    q1 = session.query(Labels.messageId).filter(Labels.label == 'UNREAD')
-    q2 = session.query(Labels.messageId).filter(Labels.label == 'INBOX')
+    q1 = session.query(Labels.messageId).filter(Labels.labelId == 'UNREAD')
+    q2 = session.query(Labels.messageId).filter(Labels.labelId == 'INBOX')
     q = session.query(MessageInfo).filter(
         MessageInfo.emailAddress == account,
         MessageInfo.messageId.in_(q1),
@@ -534,11 +534,22 @@ class LabelInfo(Base):
     Returns: None.
     '''
     service = mkService(account)
-    response = service.users().labels().list(userId='me')
-    for label in response['labels']:
-      labelInfo = cls(label['id'], label['name'])
-      session.add(labelInfo)
+    response = service.users().labels().list(userId='me').execute()['labels']
+    for label in response:
+      q = session.query(cls).filter(cls.labelId == label['id']).first()
+      if q is None:
+        labelInfo = cls(label['id'], label['name'])
+        session.add(labelInfo)
+    # TODO: remove old labels...
+    # q = session.query(cls)\
+    #     .filter(~cls.labelId.in_([label['id'] in response]))\
+    #     .delete(synchronize_session=False)
     session.commit()
+
+  @classmethod
+  def getName(cls, session):
+    q = session.query(cls)
+    return {label.labelId: label.labelName for label in q}
 
 
 class Labels(Base):
@@ -589,7 +600,7 @@ class Labels(Base):
     '''
     for (messageId, ls) in labels:
       session.query(cls)\
-          .filter(cls.messageId == messageId, cls.label.in_(ls))\
+          .filter(cls.messageId == messageId, cls.labelId.in_(ls))\
           .delete(synchronize_session=False)
       # logger.info('About to commit, after removing labels.')
     session.commit()
@@ -654,7 +665,7 @@ class MessageInfo(Base):
   def __ne__(self, other):
     return not self.__eq__(other)
 
-  def display(self, senderWidth, scrWidth):
+  def display(self, senderWidth, scrWidth, labelMap):
     '''
     For displaying information about a message in the main screen
     of the program.
@@ -665,11 +676,11 @@ class MessageInfo(Base):
     Reurns:
       A formatted string.
     '''
-    if 'UNREAD' in [l.label for l in self.labels]:
+    if 'UNREAD' in [l.labelId for l in self.labels]:
       marker = chr(config.unread) + ' '
     else:
       marker = '  '
-    if self.existsAttachments():
+    if self.existsAttachments(labelMap):
       attachment = chr(config.attachment) + ' '
     else:
       attachment = '  '
@@ -684,8 +695,8 @@ class MessageInfo(Base):
     )[:scrWidth]
     return str
 
-  def showLabels(self):
-    return [l.label for l in self.labels]
+  def showLabels(self, labelMap):
+    return [labelMap[label.labelId] for label in self.labels]
 
   def timeForReply(self):
     '''
@@ -696,7 +707,7 @@ class MessageInfo(Base):
 
   def parseSender(self):
     '''
-    Try to extract name and email address from the 'From' 
+    Try to extract name and email address from the 'From'
     field of the header.
     '''
     try:
@@ -717,14 +728,13 @@ class MessageInfo(Base):
       name = name[:senderWidth]
     return name
 
-  def existsAttachments(self):
+  def existsAttachments(self, labelMap):
     '''
     Try to figure out if there are attachments from the content-type
-    header. This can return false positives. 
-    To deal with this if at some later stage (usually, when trying to view 
-    attachments) it is found that really there were no attachments, the 
+    header. This can return false positives.
+    To deal with this if at some later stage (usually, when trying to view
+    attachments) it is found that really there were no attachments, the
     hasAttachments attribute gets updated to False.
-    '''
     if self.hasAttachments == False:
       return self.hasAttachments
     else:
@@ -737,6 +747,10 @@ class MessageInfo(Base):
         return False
       else:
         return True
+    '''
+    labelIds = [label.labelId for label in self.labels]
+    labelNames = [labelMap[label] for label in labelIds]
+    return 'ATTACHMENT' in labelNames
 
   @classmethod
   def addMessage(cls, account, session, msg):
@@ -792,7 +806,7 @@ class MessageInfo(Base):
     '''
     Add many messages to the db.
 
-    Args: 
+    Args:
       session: A db session.
       account: The accoun which owns the messages
       service: An API service.
@@ -846,7 +860,7 @@ class MessageInfo(Base):
   @classmethod
   def removeMessages(cls, session, messageIds):
     '''
-    Delete messages (Not in use currently and 
+    Delete messages (Not in use currently and
     might need extra scopes to work.)
     '''
     session.query(cls).filter(cls.messageId in

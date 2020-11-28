@@ -281,7 +281,7 @@ class State():
     n = len(numOfMessagesString)
 
     if self.showLabels is True:
-      labels = str(selectedMessage.showLabels())
+      labels = str(selectedMessage.showLabels(labelMap))
     else:
       labels = ''
     labels = labels[: width - mbLen - acLen - stLen - n - 1]
@@ -857,7 +857,7 @@ def drawAttachments(stdscr, account, state, attachments):
 # ---> Draw message list
 
 
-def drawMessages(stdscr, state, accountSwitcher, eventQue):
+def drawMessages(stdscr, state, accountSwitcher, eventQue, labelMap):
   '''
   Loop to draw main screen of the program. A list of messages, which
   depends on the programs state.
@@ -1159,7 +1159,7 @@ def drawMessages(stdscr, state, accountSwitcher, eventQue):
       # state.selectedMessage = selectedMessage
 
       for i, h in enumerate(messages[:height - 2]):
-        display = h.display(15, width)
+        display = h.display(15, width, labelMap)
         l1 = len(display)
         stdscr.attron(curses.color_pair(1))
         if state.cursor_y == i and h in state.selectedMessages:
@@ -1755,11 +1755,13 @@ def mainLoop(lock, accountSwitcher, eventQue):
   # Initialise the state.
   state = State(account=account,
                 lock=lock)
+  labelMap = sendToServer({'action': 'GET_LABEL_MAP'}, lock)
   while True:
     try:
       # Run inner loop and update the state when it exits.
       state = curses.wrapper(
-          lambda x: drawMessages(x, state, accountSwitcher, eventQue))
+          lambda x: drawMessages(x, state, accountSwitcher, eventQue,
+                                 labelMap))
       if type(state.action).__name__ == 'Quit':
         break
       else:

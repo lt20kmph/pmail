@@ -14,9 +14,9 @@ import socket
 # from apiclient import errors
 from pmail.common import (mkService, Session, Labels, MessageInfo,
                           listMessagesMatchingQuery, logger,
-                          UserInfo, config)
+                          UserInfo, config, setupAttachments, LabelInfo)
 from pmail.subscriber import subscribe
-from googleapiclient.errors import HttpError
+# from googleapiclient.errors import HttpError
 # from googleapiclient.http import BatchHttpRequest
 from threading import Thread, Lock, Event
 from time import sleep, time
@@ -101,7 +101,11 @@ def ListHistory(service, user_id, start_history_id='1'):
 # <---
 
 
-def updateDb(account, session, service, newMessagesArrived, lastHistoryId=None):
+def updateDb(account,
+             session,
+             service,
+             newMessagesArrived,
+             lastHistoryId=None):
   '''
   Update the Database with messages since lastHistoryId.
 
@@ -117,10 +121,11 @@ def updateDb(account, session, service, newMessagesArrived, lastHistoryId=None):
   # 100 is maximum size of batch!
   if lastHistoryId is None:
     messageIds = listMessagesMatchingQuery(service(account),
-                                           'me', query='newer_than:' + config.syncFrom)
+                                 'me', query='newer_than:' + config.syncFrom)
     MessageInfo.addMessages(session, account,
                             service(account), [m['id'] for m in messageIds])
     lastMessageId = messageIds[0]['id']
+    LabelInfo.addLabels(session, account)
     # logger.info('lastMessageId: {}'.format(lastMessageId))
 
   else:
@@ -157,6 +162,7 @@ def updateDb(account, session, service, newMessagesArrived, lastHistoryId=None):
     MessageInfo.removeMessages(session, messagesDeleted)
     Labels.addLabels(session, labelsAdded)
     Labels.removeLabels(session, labelsRemoved)
+    LabelInfo.addLabels(session, account)
 
     if len(changes) > 0:
       lastHistoryId = str(max([int(change['id']) for change in changes]))
@@ -260,9 +266,9 @@ class SaveQuery():
       return self.savedQuery
     else:
       excludeQuery = s.query(Labels.messageId).filter(
-          Labels.label.in_(excludedLabels))
+          Labels.labelId.in_(excludedLabels))
       includeQuery = s.query(Labels.messageId).filter(
-          Labels.label.in_(includedLabels))
+          Labels.labelId.in_(includedLabels))
       # logger.info('Made two queries.')
       if account:
         q = s.query(MessageInfo)\
@@ -337,7 +343,7 @@ def pmailServer(lock, newMessagesArrived, Q):
   bufferSize = 1024
 
   portFree = True
-  while portFree == True:
+  while portFree is True:
     try:
       sock = socket.socket()
       sock.bind((host, port))
@@ -443,14 +449,19 @@ def pmailServer(lock, newMessagesArrived, Q):
         s.query(MessageInfo).filter(MessageInfo.messageId == messageId)\
             .update({MessageInfo.hasAttachments: False},
                     synchronize_session='evaluate')
+      elif action == 'GET_LABEL_MAP':
+        # Get the labelMap - this feels a bit hacky...
+        labelMap = LabelInfo.getName(s)
+        logger.info(labelMap)
+        response = labelMap
 
     pickledResponse = pickle.dumps(response)
     sizeOfPickle = len(pickledResponse)
-    numOfChunks = sizeOfPickle//bufferSize + 1
+    numOfChunks = sizeOfPickle // bufferSize + 1
     conn.send(sizeOfPickle.to_bytes(4, 'big'))
 
     for i in range(numOfChunks):
-      conn.send(pickledResponse[i*bufferSize: (i+1)*bufferSize])
+      conn.send(pickledResponse[i * bufferSize: (i + 1) * bufferSize])
 
     # if action == 'REMOVE_LABELS':
     #   for account in config.listAccounts():
@@ -542,6 +553,7 @@ def _syncDb_pubsub(session, pubSubQue, newMessagesArrived, lock, futures):
     if not ui:
       logger.info('Userinfo for: {} does not exist.'.format(account))
       ui = UserInfo(account)
+      setupAttachments(account)
       with lock:
         logger.info('Sync function acquired lock. About to sync.')
         session.add(ui)
@@ -607,6 +619,7 @@ def _syncDb_freq(session, newMessagesArrived, lock):
     if not ui:
       logger.info('Userinfo for: {} does not exist.'.format(account))
       ui = UserInfo(account)
+      setupAttachments(account)
       with lock:
         logger.info('Sync function acquired lock. About to sync.')
         session.add(ui)
@@ -618,7 +631,7 @@ def _syncDb_freq(session, newMessagesArrived, lock):
       for account in config.listAccounts():
         __syncDb(session, account, newMessagesArrived)
   except Exception:
-    logger.exception('Error while getting something from the pubsub queue.')
+    logger.exception('Error while trying to sync local DB.')
   sleep(config.updateFreq)
 
 
@@ -633,14 +646,14 @@ def __syncDb(session, account, newMessagesArrived):
     None
   '''
   ui = session.query(UserInfo).get(account)
-  if ui.shouldIupdate == False:
+  if ui.shouldIupdate is False:
     lastHistoryId = updateDb(account, session, mkService,
                              newMessagesArrived, getLastHistoryId(account,
                                                                   session))
     ui.update(session, account, None, lastHistoryId)
     logger.info('Successful partial update for {}.'.format(account))
 
-  elif ui.shouldIupdate == True:
+  elif ui.shouldIupdate is True:
     ui.shouldIupdate = False
     lastHistoryId = updateDb(account, session, mkService, newMessagesArrived)
     ui.update(session, account, mkService(account), lastHistoryId)
@@ -656,7 +669,7 @@ def syncDb(lock, newMessagesArrived):
   Function to keep local db in sync with remote db (gmail).
   Args:
     lock: threading.Lock() object, to prevent race conditions on local db.
-    newMessagesArrived: threading.Event() object, so that the server can be 
+    newMessagesArrived: threading.Event() object, so that the server can be
     notified when the syncher detects something new.
   Returns:
     None

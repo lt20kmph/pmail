@@ -46,11 +46,11 @@ if pmail is run with BOTH of -m and -n flags then it will exit with a warning
                       help='run pmail in MODE=[server|client] mode',
                       action='store')
 
-  parser.add_argument('-t',
-                      metavar='TEST',
-                      # choices=['server', 'client'],
-                      help='testing stuff',
-                      action='store')
+  # parser.add_argument('-t',
+  #                     metavar='TEST',
+  #                     # choices=['server', 'client'],
+  #                     help='testing stuff',
+  #                     action='store')
 
   args = parser.parse_args()
 
@@ -67,7 +67,7 @@ if pmail is run with BOTH of -m and -n flags then it will exit with a warning
             .format(configPath))
     sys.exit()
 
-  if args.n is None and args.m is None and args.t is None:
+  if args.n is None and args.m is None:  # and args.t is None:
     parser.print_help()
   elif args.n and args.m:
     msg = 'pmail can only be run with ONE of -n or -m'
@@ -80,5 +80,5 @@ if pmail is run with BOTH of -m and -n flags then it will exit with a warning
     pmail.client.start()
   elif args.m == 'server':
     pmail.server.start()
-  elif args.t == 'attach':
-    pmail.common.setupAttachments('o.g.sargent@gmail.com')
+  # elif args.t == 'attach':
+  #   pmail.common.setupAttachments('o.g.sargent@gmail.com')
