@@ -242,6 +242,15 @@ then running:
 would return the number of unread mails in the mailbox for
 `yourname@gmail.com`. This is potentially useful for scripts.
 
+### Attachments
+
+In order to correctly (more or less) detect which messages have attachments,
+when pmail is first run, it will create a new hidden label called `ATTACHMENT`
+which it will add to all existing messages with attachments and also create a
+filter which will add this label to all new incoming messsages with
+attachements. This means that pmail will display the attachments icon on any
+messages which have the paperclip icon in the gmail web interface.
+
 ## Security considerations
 
 YOU ARE RESPONSIBLE FOR YOU OWN SECURITY. Keep your credentials.json file
@@ -257,9 +266,9 @@ attempt to run the client/server over any network you do not completely trust
 ## Limitations and TODO
 
 - [ ] There are some strange bugs which need to be investigated.
-- [ ] The algorithm to detect attachments is unreliable.
 - [ ] Handle searches with large number of results differently.
-- [ ] Improve error handling and logging. 
+- [ ] Improve error handling and logging (partially done, but can still be
+    improved). 
 
 [1]: https://developers.google.com/gmail/api/quickstart/python
 [2]: http://w3m.sourceforge.net/
