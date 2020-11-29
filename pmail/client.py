@@ -1758,7 +1758,12 @@ def mainLoop(lock, accountSwitcher, eventQue):
   # Initialise the state.
   state = State(account=account,
                 lock=lock)
-  labelMap = sendToServer({'action': 'GET_LABEL_MAP'}, lock)
+  try:
+    labelMap = sendToServer({'action': 'GET_LABEL_MAP'}, lock)
+  except ConnectionError:
+    print('Could not connect to server!\r\n')
+    logger.warning('Could not connect to the server.')
+    sys.exit()
   while True:
     try:
       # Run inner loop and update the state when it exits.

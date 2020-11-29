@@ -443,12 +443,12 @@ def pmailServer(lock, newMessagesArrived, Q):
         labels = unpickledIncoming['labels']
         Labels.addLabels(s, labels)
         response = None
-      elif action == 'REMOVE_FALSE_ATTACMENTS':
-        # Remove false attachments.
-        messageId = unpickledIncoming['messageId']
-        s.query(MessageInfo).filter(MessageInfo.messageId == messageId)\
-            .update({MessageInfo.hasAttachments: False},
-                    synchronize_session='evaluate')
+      # elif action == 'REMOVE_FALSE_ATTACMENTS':
+      #   # Remove false attachments.
+      #   messageId = unpickledIncoming['messageId']
+      #   s.query(MessageInfo).filter(MessageInfo.messageId == messageId)\
+      #       .update({MessageInfo.hasAttachments: False},
+      #               synchronize_session='evaluate')
       elif action == 'GET_LABEL_MAP':
         # Get the labelMap - this feels a bit hacky...
         labelMap = LabelInfo.getName(s)
