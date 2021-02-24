@@ -4,6 +4,7 @@
 credentials.*
 *.json
 *.log
+mirrors.new
 pub2pypi.sh
 test*
 tmp/
